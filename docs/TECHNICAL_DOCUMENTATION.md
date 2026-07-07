@@ -1,10 +1,10 @@
-# FinRAG — Technical Documentation
+# FinRAG: Technical Documentation
 
 > **Living document.** This is the authoritative technical reference for the system. It **must** be updated in the same change set as any modification that alters the architecture, adds or removes a component, changes an interface or data contract, changes the data model, or changes the deployment topology. Record every such change in the [Revision history](#12-revision-history).
 
 | | |
 |---|---|
-| **Status** | Draft — pre-implementation |
+| **Status** | Draft, pre-implementation |
 | **Owner** | Vijay Ananth Karunanithi |
 | **Last updated** | 2026-07-07 |
 | **Version** | 0.1.0 |
@@ -13,7 +13,7 @@
 
 ## 1. Overview
 
-FinRAG is a retrieval-augmented question-answering system for financial and regulatory documents (annual reports, BaFin filings). It answers natural-language questions grounded strictly in a document corpus and returns **verifiable citations** — page number and bounding-box region — for every claim. A self-correction pass validates answers before they are returned, and low-confidence responses are flagged rather than emitted as fact.
+FinRAG is a retrieval-augmented question-answering system for financial and regulatory documents (annual reports, BaFin filings). It answers natural-language questions grounded strictly in a document corpus and returns **verifiable citations** (page number and bounding-box region) for every claim. A self-correction pass validates answers before they are returned, and low-confidence responses are flagged rather than emitted as fact.
 
 The system is built for a compliance context, where an unsupported or incorrect answer is more costly than an abstention.
 
@@ -29,7 +29,7 @@ The system is built for a compliance context, where an unsupported or incorrect 
 **Non-goals**
 - Model fine-tuning (covered by a separate project).
 - General-purpose chat unrelated to the ingested corpus.
-- Automated regulatory decision-making — the system assists a human reviewer, it does not replace one.
+- Automated regulatory decision-making. The system assists a human reviewer, it does not replace one.
 
 ## 3. System architecture
 
@@ -100,7 +100,7 @@ flowchart LR
 
 - **Local:** Docker; Qdrant runs as a container.
 - **Cloud:** AWS. Documents in S3; service on ECS/EKS. Bedrock is an optional managed-model path.
-- **CI/CD:** GitHub Actions — lint, test, and the Ragas eval gate.
+- **CI/CD:** GitHub Actions for lint, test, and the Ragas eval gate.
 
 ## 10. Observability
 
