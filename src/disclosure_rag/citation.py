@@ -81,11 +81,34 @@ def _overlaps(outer: Span, inner: Span) -> bool:
     return outer.covers(inner) >= 0.5
 
 
+def _column_of(span: Span, headers: list[tuple[str, Span]]) -> str | None:
+    """The header sitting above a figure, horizontally overlapping it.
+
+    This is the information the line-based selector lacks. A statement row holds
+    several periods' values and nothing on the line says which is which; the
+    header row above the table does. Matching by horizontal overlap is what a
+    reader's eye does.
+    """
+    best: tuple[float, str] | None = None
+    for text, header in headers:
+        if header.page != span.page or header.y1 > span.y0:
+            continue  # must sit above the figure
+        overlap = min(span.x1, header.x1) - max(span.x0, header.x0)
+        width = max(span.x1 - span.x0, 1e-9)
+        if overlap <= 0:
+            continue
+        share = overlap / width
+        if share > 0.3 and (best is None or header.y1 > best[0]):
+            best = (header.y1, text)  # nearest header above wins
+    return best[1] if best else None
+
+
 def select_numeric_spans(
     pdf_path: Path,
     chunk: Chunk,
     query: str,
-    max_spans: int = 3,
+    max_spans: int = 1,
+    period_hint: str | None = None,
 ) -> list[Span]:
     """Pick the figures within a retrieved chunk that the query is asking about.
 
@@ -130,6 +153,23 @@ def select_numeric_spans(
         if best_line is None:
             continue
 
-        candidates.extend(span for text, span in best_line if looks_numeric(text))
+        figures = [(text, span) for text, span in best_line if looks_numeric(text)]
+
+        # With a period to match, use the column header to choose among the row's
+        # figures. Without it the selector is guessing between several periods'
+        # values, which is what held citation accuracy at 5.8%. ADR-0011.
+        if period_hint and len(figures) > 1:
+            headers = [(text, span) for text, span in words if not looks_numeric(text)]
+            wanted = {term for term in tokenize(period_hint) if any(c.isdigit() for c in term)}
+            if wanted:
+                matched = [
+                    (text, span)
+                    for text, span in figures
+                    if (column := _column_of(span, headers)) and wanted & set(tokenize(column))
+                ]
+                if matched:
+                    figures = matched
+
+        candidates.extend(span for _, span in figures)
 
     return candidates[:max_spans]

@@ -59,6 +59,10 @@ class Question(BaseModel):
     gold_spans: list[Span] = Field(default_factory=list)
     gold_value: str = ""
     source_fact_id: str = ""
+    period_hint: str = Field(
+        default="",
+        description="The period phrase, so a citation can pick the matching table column",
+    )
     label_source: str = Field(
         default="own",
         description="'own' if the label came from this filing's linkbase, 'pooled' if another's",
@@ -208,6 +212,7 @@ def questions_from_ledger(
                 text=text,
                 stratum=Stratum.EXACT_FIGURE,
                 gold_spans=locations[candidate.key],
+                period_hint=period,
                 gold_value=candidate.value,
                 source_fact_id=candidate.fact_id,
                 label_source=candidate.label_source,

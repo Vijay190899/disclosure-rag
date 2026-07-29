@@ -140,6 +140,14 @@ class StratumScore(BaseModel):
         description="Share of questions whose cited figure overlaps the tagged figure by >= 0.5",
     )
     mean_citation_iou: float = 0.0
+    citation_iou_given_rank_1: float = Field(
+        default=0.0,
+        description=(
+            "Citation IoU@0.5 among questions where the top passage was already correct. "
+            "Isolates the figure-selection problem from the retrieval problem."
+        ),
+    )
+    questions_at_rank_1: int = 0
 
 
 def _recall_at(paired: list[tuple[Result, list[Span]]], k: int) -> float:
@@ -181,6 +189,13 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
             if result.top_coverage(gold) >= COVERAGE_THRESHOLD
         ]
         citation_ious = [result.citation_iou(gold) for result, gold in paired]
+        # Citation accuracy cannot exceed rank-1 recall: with the wrong passage on
+        # top there is nothing correct to outline. Reporting it conditionally
+        # separates "found the right place" from "pointed at the right thing in
+        # it", which are different failures with different fixes.
+        conditional = [
+            result.citation_iou(gold) for result, gold in paired if result.hit_rank(gold) == 1
+        ]
         at_1, at_10 = _recall_at(paired, 1), _recall_at(paired, 10)
         scores.append(
             StratumScore(
@@ -196,6 +211,12 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
                 citation_iou_at_50=sum(1 for value in citation_ious if value >= IOU_THRESHOLD)
                 / len(citation_ious),
                 mean_citation_iou=sum(citation_ious) / len(citation_ious),
+                citation_iou_given_rank_1=(
+                    sum(1 for v in conditional if v >= IOU_THRESHOLD) / len(conditional)
+                    if conditional
+                    else 0.0
+                ),
+                questions_at_rank_1=len(conditional),
             )
         )
 

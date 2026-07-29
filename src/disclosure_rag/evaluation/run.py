@@ -80,6 +80,7 @@ def run_retriever(
     top_k: int = 10,
     pdf_for: dict[str, Path] | None = None,
     max_cited: int = 1,
+    use_column_headers: bool = False,
 ) -> dict[str, Result]:
     retriever.index(chunks)
     results: dict[str, Result] = {}
@@ -92,7 +93,11 @@ def run_retriever(
         cited: list[Span] = []
         if hits and pdf_for and question.document_id in pdf_for:
             cited = select_numeric_spans(
-                pdf_for[question.document_id], hits[0].chunk, question.text, max_spans=max_cited
+                pdf_for[question.document_id],
+                hits[0].chunk,
+                question.text,
+                max_spans=max_cited,
+                period_hint=question.period_hint if use_column_headers else None,
             )
         results[question.question_id] = Result(
             question_id=question.question_id,
@@ -119,16 +124,16 @@ def per_question_hits(questions: list[Question], results: dict[str, Result], k: 
 def render_scores(name: str, scores: list[StratumScore]) -> str:
     lines = [
         f"\n{name}",
-        "| Stratum | n | recall@1 | recall@5 | recall@10 | shown first when found "
-        "| citation IoU@0.5 | mean citation IoU |",
+        "| Stratum | n | recall@1 | recall@5 | recall@10 | citation IoU@0.5 "
+        "| IoU given rank-1 (n) |",
         "|---|---|---|---|---|---|---|",
     ]
     for score in scores:
         lines.append(
             f"| {score.stratum.value} | {score.questions} | "
             f"{score.recall_at_1:.3f} | {score.recall_at_5:.3f} | {score.recall_at_10:.3f} | "
-            f"{score.shown_first_when_found:.3f} | {score.citation_iou_at_50:.3f} | "
-            f"{score.mean_citation_iou:.3f} |"
+            f"{score.citation_iou_at_50:.3f} | "
+            f"{score.citation_iou_given_rank_1:.3f} ({score.questions_at_rank_1}) |"
         )
     return "\n".join(lines)
 
@@ -157,6 +162,11 @@ def main() -> int:
         help="chunk size budget. Must fit the embedding model's window, see dense.py",
     )
     parser.add_argument("--overlap-tokens", type=int, default=80)
+    parser.add_argument(
+        "--column-headers",
+        action="store_true",
+        help="use the column header above a figure to pick the right period's value",
+    )
     parser.add_argument(
         "--max-cited",
         type=int,
