@@ -30,6 +30,9 @@ data/
 qdrant_storage/
 models/
 
+# The committed screenshot is documentation, not a build artefact.
+!docs/images/**
+
 # Test fixtures are the exception: cached parse output and small sample pages
 # are committed so the chunker is testable offline, without network or keys.
 !tests/fixtures/**

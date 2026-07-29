@@ -42,8 +42,10 @@ labels:
 	uv run playwright install chromium
 	uv run python -m disclosure_rag.labels.build --filings data/filings --out data/ledgers
 
+# Settings pinned to the ones the published numbers were measured at, so
+# `make eval` reproduces the README rather than something adjacent to it.
 eval:
-	uv run python -m disclosure_rag.evaluation.run --ledgers data/ledgers --out data/results.json
+	uv run python -m disclosure_rag.evaluation.run --ledgers data/ledgers --chunk-tokens 600 --overlap-tokens 20 --out data/results.json
 
 spike:
 	uv sync --extra dev --extra spike

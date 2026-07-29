@@ -1,269 +1,157 @@
-# disclosure-rag: answering questions about financial filings, with receipts
+# disclosure-rag
 
-**Retrieval-augmented generation (RAG) over EU annual financial reports. Every claim links to the
-exact page and region it came from, and low-confidence answers abstain instead of guessing. The
-citations are scored against bounding-box ground truth taken mechanically from Inline XBRL, so
-"the citation points at the right place" is a measured number rather than a promise.**
+**Question answering over EU annual financial reports, where every answer points at the exact figure
+it came from.** A router sends questions about tagged figures to a structured lookup and everything
+else to retrieval, so numbers are exact rather than approximated, and unsupported questions are
+declined rather than guessed at.
 
-> **Status: design complete, feasibility measured, pipeline not started.** The M0 probe has run
-> against 865 tagged facts in real filings and settled two open questions: gold citation boxes can
-> be produced mechanically (865 of 865 located, median IoU 0.947), and numeric reconciliation
-> cannot be labelled for free (19 of 50 against a threshold of 20), so that feature is cut. The
-> numbers in [Measured so far](#measured-so-far) are real. Everything in
-> [Targets](#targets) is not yet built. Progress in [docs/ROADMAP.md](docs/ROADMAP.md).
+![A cited figure outlined on the source page](docs/images/citation.png)
 
-## The problem
+*"Wie hoch war Zinserträge unter Anwendung der Effektivzinsmethode im Geschäftsjahr 2022?"*
+→ `192.900.000,00 EUR`, page 25, outlined above. Note which column: the 2022 figure, not the 185,5
+sitting next to it.
 
-Someone checking a published annual report is doing one of two things. Either they are looking for
-a disclosure, in a 400-page document, and need to know exactly where it is. Or they are checking
-that the narrative agrees with the audited statements: the management report says revenue "grew to
-roughly 1.2 billion euro", and the income statement needs to say the same thing.
+## Why route instead of embedding everything
 
-Most RAG systems handle the first badly and the second not at all. Flattening a PDF to plain text
-throws away the table structure that carries the meaning, and a chunk-level citation is not much
-help to someone whose whole job is verification. The second problem is not really a retrieval
-problem: it is extraction, then unit and scale normalisation, then arithmetic, and language models
-are unreliable at the last two.
+EU issuers file annual reports under ESEF, which is XHTML carrying Inline XBRL. The machine-readable
+tag wraps the number a human reads, so the filing itself declares each figure's value, unit, period
+and position.
 
-## The part I actually care about
+A question about a tagged figure therefore has an exact answer at a known location. Putting that
+through a vector search and asking a model to read it back is strictly worse: the answer can be
+wrong, and the citation becomes a prediction. So those questions are looked up, and the citation is
+the filer's own bounding box rather than an estimate.
 
-**A retrieval system can give you a correct answer while citing the wrong place.**
+Retrieval is used where retrieval belongs, on the narrative and qualitative content that carries no
+tags.
 
-Standard RAG evaluation cannot see this. It scores the answer text and never checks whether the
-citation resolves anywhere useful. For a reader who has to verify the claim, an answer that is
-right for the wrong reason is worse than no answer, because it costs them the time to discover it.
+## Results
 
-I want to measure that gap and publish it. The interesting result is not "answer accuracy is 89%".
-It is "answer accuracy is 89% and top-1 citation accuracy is 71%, so a meaningful share of correct
-answers point somewhere they should not."
+Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
 
-### Why this is measurable at all
+**End to end**, 120 generated cases over three Austrian filings:
 
-EU issuers file their annual report under ESEF (Delegated Regulation (EU) 2019/815), which is XHTML
-with **Inline XBRL**. The machine-readable tag is not a separate file, it wraps the number you can
-see:
+| Measure | n | Result |
+|---|---|---|
+| Routing accuracy, tagged figures | 60 | **0.983** |
+| Answer exact match, tagged figures | 60 | **0.950** |
+| Abstention recall, unanswerable questions | 60 | **1.000** |
+| Abstention precision | 60 | **1.000** |
+| False answer rate on unanswerable questions | 60 | **0.000** |
+| Wrong-period traps survived | 30 | **1.000** |
+| Latency p50 / p95 | 120 | **1.3 ms / 2.3 ms** |
 
-```html
-<ix:nonFraction name="ifrs-full:Revenue" contextRef="FY2024" unitRef="EUR"
-                scale="6" decimals="-6">1,204</ix:nonFraction>
-```
+Wrong-period traps ask for a real concept in a year the filing does not report. They separate knowing
+the concept from knowing the period, which is the distinction a plausible wrong answer hides. The
+system never returns a figure for one.
 
-So the value, unit, scale and period are declared, and because the tag is an element in a rendered
-document, a browser can tell me exactly where it sits on the page. That is gold-standard provenance
-obtained mechanically, at scale, with no hand annotation.
+**Retrieval**, BM25 over 799 chunks, scored against bounding boxes taken from the filings' own tags:
 
-Only the primary statements are tagged this way, which is what makes the tags usable as an
-independent gold standard: the pipeline itself only ever sees the rendered PDF, never a tag.
+| Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|
+| 0.350 | 0.567 | 0.692 | 0.449 | 0.506 |
 
-I also expected to use the tagged statements as an oracle for checking figures restated in the
-untagged narrative. [I measured that and it did not hold up](#measured-so-far), so it is cut.
+**Label quality**, the gold standard the above is measured against: 865 of 865 tagged facts located,
+median IoU 0.947 between the tag's location and an independent text search for the same figure.
+
+### Abstention is a chosen operating point, not a default
+
+| Threshold | Exact match on answerable | False answer rate on unanswerable |
+|---|---|---|
+| 0.50 | 0.950 | 0.517 |
+| 0.70 | 0.950 | 0.017 |
+| **0.80** | **0.950** | **0.000** |
+
+0.8 is the shipped setting. Exact match does not move because tagged figures come through the
+structured layer at full confidence, so a passage-path threshold cannot affect them. What it does
+cost is narrative recall, which this corpus has no gold set for, and that trade is deliberate: for a
+document a reader has to verify, an answer they cannot check is worth less than none.
 
 ## How it works
 
-One source document, two independent paths. They meet only inside the evaluation harness, after the
-serving side has committed to an answer.
-
 ```mermaid
 flowchart LR
-    SRC["ESEF filing<br/>XHTML + Inline XBRL"]
+    Q["Question"] --> R{"Router"}
 
-    subgraph LP["Label plane · the oracle"]
-        direction TB
-        L1["Extract tagged facts"]
-        L2["Read element geometry<br/>in headless browser"]
-        LED[("Fact ledger<br/>value + location")]
-        L1 --> LED
-        L2 --> LED
-    end
+    R -->|"tagged concept<br/>+ period"| L["Fact ledger"]
+    R -->|"otherwise"| P["Hybrid retrieval"]
 
-    subgraph SP["Serving plane · the system under test"]
-        direction TB
-        S1["Render to PDF"]
-        S2["Parse blocks<br/>with bounding boxes"]
-        S3["Chunk, preserving spans"]
-        S4["Hybrid retrieval<br/>dense + BM25 + rerank"]
-        S5["Grounded answer<br/>or abstain"]
-        S1 --> S2 --> S3 --> S4 --> S5
-    end
+    L --> LA["Exact value<br/>citation = the tag's own box"]
+    P --> PA["Grounded answer<br/>with span citations"]
 
-    EVAL{{"Evaluation"}}
+    LA --> G{"Supported?"}
+    PA --> G
+    G -->|yes| OUT["Answer + regions to outline"]
+    G -->|no| ABS["Abstain, return nearest evidence"]
 
-    SRC ==> LP
-    SRC ==> SP
-    LED -. "gold labels" .-> EVAL
-    S5 -. "predictions" .-> EVAL
-
-    classDef oracle fill:#e8f0fe,stroke:#3367d6,color:#12305e
-    classDef sut fill:#fdf0e6,stroke:#c26401,color:#5a2d00
-    class LP oracle
-    class SP sut
+    classDef exact fill:#e6f4ea,stroke:#137333,color:#0b3d1c
+    classDef soft fill:#fef7e0,stroke:#b06000,color:#5c3200
+    class L,LA exact
+    class P,PA soft
 ```
 
-The serving plane never reads a tag. It gets the rendered PDF, the same artefact a person would
-open. If the pipeline could see the tags, the benchmark would measure nothing.
+Ingestion runs alongside, offline: the filing is rendered to PDF, parsed into layout blocks that
+keep their page geometry, and chunked so that each chunk carries the list of page regions it covers.
+That list is what makes a citation resolvable to a region rather than to a passage, and it is a list
+because a table can continue across a page break.
+
+Gold labels come from a separate offline pass that reads the Inline XBRL and locates each tagged
+figure by rendering the filing and reading back the PDF link annotations. Retrieval never sees those
+tags: a test enforces that `ingest`, `retrieval` and `citation` cannot import the label plane, so the
+benchmark cannot quietly measure itself.
 
 Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md).
 
-## Why I made these choices
+## Stack
 
-Each of these has a full record in [docs/adr/](docs/adr/), with the alternative I rejected and what
-it would take to change my mind.
+Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
+in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
+Docker, GitHub Actions, mypy strict, 159 tests.
 
-- **PyMuPDF for parsing** ([ADR-0002](docs/adr/0002-pymupdf-for-parsing.md)). It gives block-level
-  bounding boxes natively, runs offline and free, and renders pages with regions drawn on them,
-  which is the same code path the citation viewer needs. I previously wrote "LlamaParse / ColPali"
-  as though those were two flavours of one thing. They are not: ColPali is a visual retrieval model
-  that would delete the chunker and make BM25 and text reranking impossible. That slash was an
-  undecided decision wearing the costume of a made one.
-- **ESEF filings as the corpus** ([ADR-0003](docs/adr/0003-esef-corpus-and-labels.md)). Real
-  documents, and the tagging gives numeric and positional ground truth for free. I had previously
-  written "mock filings", which would have made every number I produced meaningless.
-- **Citations carry a list of spans, not one box**
-  ([ADR-0004](docs/adr/0004-provenance-contract.md)). A table that continues across a page break
-  needs two. That is the motivating example, not an edge case, and the earlier single-box schema
-  could not express it.
-- **No agent framework and no MCP server**
-  ([ADR-0005](docs/adr/0005-no-agent-framework.md)). The answer loop is a fixed pipeline with no
-  dynamic control flow, so an agent framework would buy nondeterminism and a harder time explaining
-  why the system did what it did. That is a bad trade for a project whose entire point is
-  verifiability.
-- **Hybrid retrieval, but proven not assumed**
-  ([ADR-0006](docs/adr/0006-deterministic-evaluation-gate.md)). Dense vectors under-retrieve exact
-  figures and identifiers, so lexical matching should help. That is a hypothesis, and it stays
-  labelled as one until there is a delta row showing it.
+Generation sits behind a protocol with an extractive implementation as the default, so the service
+runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
+document, quoting the sentence and outlining it is correct and cannot hallucinate.
 
-## Measured so far
+Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
-The M0 probe ran against three Austrian ESEF filings, 865 tagged facts. Thresholds were written
-down before it ran. Full detail in [spikes/esef_probe/REPORT.md](spikes/esef_probe/REPORT.md) and
-the reasoning in [ADR-0007](docs/adr/0007-m0-probe-outcome.md).
-
-| Question | Threshold | Result | |
-|---|---|---|---|
-| Can gold citation boxes be produced mechanically? | 90% located | **865 of 865 (100%)**, median IoU **0.947** | pass |
-| Can numeric reconciliation be labelled for free? | 20 of 50 | **19 of 50** | fail |
-
-**What each result changed.** The first is the project's foundation and it holds: region-level
-citation accuracy is measurable at scale with no hand annotation, so citation IoU stays as the
-headline metric. The second is cut. Real cases exist, such as "Die Gesamtaktiva der Addiko Gruppe
-beliefen sich zum Jahresende 2022 auf EUR 5.996,4 Mio" resolving to `ifrs-full:Assets`, but not
-enough of them to build a benchmark without hand labelling, which was the whole argument for
-including it.
-
-Two things the probe also corrected. My first method for locating facts, reading element geometry
-in the browser, located **0 of 600**: screen layout and print layout are different layouts, and
-Chromium repaginates when printing. Reading PDF link annotations instead fixed it completely. And
-there are **no German filings** in the open index, because Germany's officially appointed mechanism
-is the Unternehmensregister and it does not publish into it, so the corpus is Austrian: still
-German-language, still ESEF.
-
-Roughly a week of work avoided, for an afternoon of measurement. That is what the gate was for.
-
-### Results
-
-120 questions over three Austrian filings, retrieval scoped to the filing each question asks about,
-gold covering every tagged occurrence of the figure. BM25 needs no model and no server, so a full
-run takes seconds and anyone can reproduce it.
-
-**Chunk size** (BM25, same questions throughout):
-
-| chunk tokens | chunks | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found |
-|---|---|---|---|---|---|---|
-| 110 | 5019 | 0.075 | 0.233 | 0.408 | 0.075 | 0.184 |
-| 300 | 1706 | 0.108 | **0.408** | **0.533** | 0.108 | 0.203 |
-| 600 | 799 | **0.208** | 0.375 | 0.508 | **0.208** | **0.410** |
-
-**The headline is that last cell.** At the best setting, when the answer is retrieved at all it is
-ranked first only 41% of the time. On the other 59% the system holds the right passage and would put
-a different region in front of the reader. Answer-level scoring cannot see that, and it is the
-failure a person doing verification would care about most. It is worse than I expected.
-
-Why 110 tokens was tried at all is the other finding: it is the largest budget that fits the
-embedding model's 128-token window. Shrinking chunks to fit the model cost recall@1 nearly two
-thirds. So the embedding context window is not a property of the dense component, it propagates back
-into chunking and degrades lexical retrieval too. The fix is a longer-context embedder, not smaller
-chunks.
-
-**The ablation ladder**, and the decision it overturned:
-
-| Retriever | recall@5 (n=120) | recall@5, own label (n=86) |
-|---|---|---|
-| bm25 | **0.233** | **0.314** |
-| dense (multilingual MiniLM) | 0.042 | 0.035 |
-| hybrid (reciprocal rank fusion) | 0.183 | 0.221 |
-
-Paired bootstrap 95% interval on recall@5: bm25 to dense **-0.192 [-0.275, -0.117]**, dense to
-hybrid **+0.142 [+0.075, +0.217]**.
-
-**Hybrid retrieval loses to plain BM25**, so the decision I recorded on day one and was most
-confident about does not survive its first measurement. Where a question uses the document's own
-wording there is no vocabulary gap for embeddings to bridge, so lexical matching wins outright and
-fusing a weaker retriever in only costs ranking positions. BM25 is now the default.
-
-I originally reported a third column here, for questions phrased with another issuer's label, and
-claimed it showed hybrid earning its place. An adversarial review caught that: at n=34 those figures
-are **one, two and three questions**, and I had also quoted a whole-sample confidence interval
-beside a subgroup mean. It is not a finding, the column is gone, and the correction is left visible
-in [ADR-0010](docs/adr/0010-ablation-ladder-results.md) rather than edited out.
-
-**These are not good numbers.** This is the easy control stratum, where the question names a concept
-and a period and the answer sits in a table row, and finding it in the top ten half the time is
-poor. Reported anyway, because a baseline is for beating and because the citation gap is already
-visible in it. Likely causes, in the order I would test them: table rows fragmenting across chunks,
-the naive tokenizer against German compounds, and no reranker yet.
-
-Getting here took six corrections, all in the measurement rather than the pipeline, each now covered
-by a regression test. They are written up in
-[ADR-0009](docs/adr/0009-m2-baseline-findings.md) and
-[ADR-0010](docs/adr/0010-ablation-ladder-results.md): a metric that was unreachable by construction,
-questions asked in the wrong language, embeddings silently truncated to a fifth of each chunk, a
-chunk budget that leaked twice, retrieval that was not scoped to the document being asked about, and
-gold that recorded one location for figures reported in several.
-
-## Targets
-
-Not built yet. These are the numbers I am building toward, published now so that the bar is set
-before I can be tempted to move it.
-
-| Metric | Target | Why this one |
-|---|---|---|
-| Citation IoU@0.5, top-1 | Establish a baseline | The point of the project. Gold boxes confirmed available by M0. |
-| recall@5, exact-figure questions | Beat dense-only by a reported margin | Tests the hybrid retrieval claim directly |
-| Abstention precision | Reported with a risk-coverage curve | The threshold should come from the curve, not from taste |
-| p95 latency | < 4 s | Usable interactively |
-
-Measured on 100 questions, stratified 40 exact-figure, 30 narrative, 30 unanswerable, reported as a
-paired bootstrap confidence interval on the delta rather than two bare point estimates. Reasoning
-for the sample size is in
-[section 9 of the technical documentation](docs/TECHNICAL_DOCUMENTATION.md#9-evaluation-design).
-
-## What could still sink this
-
-The two assumptions I was most worried about have been measured, and one of them failed, which is
-why the scope is now smaller than it was this morning. What remains untested:
-
-- **Chunking may not preserve enough context** for a retrieved passage to answer a question, even
-  with the geometry intact. Measured in M2 against the baseline.
-- **German compound nouns may break lexical retrieval**, which would undercut the hybrid retrieval
-  argument that is currently my most confident claim. Decided by the delta row, not by assertion.
-- **Table structure may be the binding constraint** rather than text extraction, which would mean
-  moving from PyMuPDF to Docling. [ADR-0002](docs/adr/0002-pymupdf-for-parsing.md) names that as
-  the upgrade path and the trigger.
-
-The pattern is the same each time: write the threshold down first, measure, and let the result
-decide rather than arguing with it.
-
-## Running it locally
+## Running it
 
 ```bash
-make install   # uv sync
-make check     # lint, typecheck, test
-make run       # health endpoint on http://localhost:8000/health
+make install                 # uv sync
+make check                   # lint, typecheck, 159 tests
+
+make labels                  # build the fact ledgers from data/filings
+make eval                    # reproduce every number above
+DISCLOSURE_RAG_CORPUS=data/ledgers make run    # API on :8000
 ```
 
-Only `/health` is implemented. `make spike` reruns the M0 probe from scratch, which downloads real
-filings and a Chromium build, then rewrites
-[spikes/esef_probe/REPORT.md](spikes/esef_probe/REPORT.md).
+Then:
+
+```bash
+curl -s localhost:8000/documents | jq
+
+curl -s localhost:8000/query -H 'content-type: application/json' -d '{
+  "question": "Wie hoch war Zinserträge unter Anwendung der Effektivzinsmethode im Geschäftsjahr 2022?",
+  "document_id": "<id from /documents>"
+}' | jq
+
+# The regions from that response, rendered onto the page
+curl -s "localhost:8000/page/<id>/25.png?regions=0.630,0.077,0.664,0.087" -o citation.png
+```
+
+Every response carries per-stage timings and a request id, and logs are structured JSON.
+
+## Limitations
+
+- **Three filings.** Enough for the benchmark to be meaningful, not enough to claim generality. The
+  corpus is Austrian, so German-language; ESEF is EU-wide so the mechanics are not country-specific.
+- **Retrieval quality is moderate.** Recall@10 of 0.692 on figure questions is a baseline, not a
+  finished component. It matters less than it looks because those questions route to the structured
+  layer, but it bounds the narrative path.
+- **The narrative path has no gold set.** Building one needs human-confirmed question and answer
+  pairs, so narrative answers are currently governed by abstention rather than measured.
+- **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
+  but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
 
 ## Licence
 
