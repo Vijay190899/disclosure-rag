@@ -1,7 +1,7 @@
 [project]
-name = "finrag"
-version = "0.1.0"
-description = "A compliance copilot for financial documents: layout-aware RAG with page-level citations."
+name = "disclosure-rag"
+dynamic = ["version"]
+description = "Grounded question answering over EU financial filings, with citations benchmarked against Inline XBRL ground truth."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
@@ -12,30 +12,57 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "qdrant-client>=1.12",
-    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "httpx>=0.27",          # required by fastapi.testclient
     "ruff>=0.7",
+    "mypy>=1.13",
     "pre-commit>=4.0",
+]
+# The spike is isolated so its heavy, throwaway dependencies never reach the
+# runtime image. See spikes/esef_probe/README.md.
+spike = [
+    "arelle-release>=2.30",
+    "playwright>=1.48",
+    "pymupdf>=1.24",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/disclosure_rag/__init__.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/finrag"]
+packages = ["src/disclosure_rag"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
+
+[tool.ruff.lint.per-file-ignores]
+# Spikes are throwaway code answering a yes/no question. They are linted for
+# real errors but not held to the annotation standard of the package.
+"spikes/**" = ["ANN"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+# Spikes are excluded deliberately: they are not part of the shipped package.
+exclude = ["^spikes/"]
+
+[[tool.mypy.overrides]]
+module = ["qdrant_client.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

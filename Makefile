@@ -1,12 +1,15 @@
-.PHONY: install lint format test run docker help
+.PHONY: install lint format typecheck test check run docker spike help
 
 help:
-	@echo "install  - create venv and install deps with uv"
-	@echo "lint     - ruff check + format check"
-	@echo "format   - ruff format"
-	@echo "test     - run pytest"
-	@echo "run      - start the FastAPI app"
-	@echo "docker   - build the container image"
+	@echo "install    - create venv and install deps with uv"
+	@echo "lint       - ruff check + format check"
+	@echo "format     - ruff format"
+	@echo "typecheck  - mypy in strict mode"
+	@echo "test       - run pytest"
+	@echo "check      - lint + typecheck + test (what CI runs)"
+	@echo "run        - start the FastAPI app on :8000"
+	@echo "docker     - build the container image"
+	@echo "spike      - install spike extras and run the ESEF probe"
 
 install:
 	uv sync --extra dev
@@ -18,11 +21,21 @@ lint:
 format:
 	uv run ruff format .
 
+typecheck:
+	uv run mypy
+
 test:
 	uv run pytest
 
+check: lint typecheck test
+
 run:
-	uv run uvicorn finrag.app:app --reload --port 8000
+	uv run uvicorn disclosure_rag.app:app --reload --port 8000
 
 docker:
-	docker build -t finrag:local .
+	docker build -t disclosure-rag:local .
+
+spike:
+	uv sync --extra dev --extra spike
+	uv run playwright install chromium
+	uv run python -m spikes.esef_probe
