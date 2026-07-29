@@ -1,125 +1,436 @@
-# FinRAG: Technical Documentation
+# disclosure-rag: Technical Documentation
 
-> **Living document.** This is the authoritative technical reference for the system. It **must** be updated in the same change set as any modification that alters the architecture, adds or removes a component, changes an interface or data contract, changes the data model, or changes the deployment topology. Record every such change in the [Revision history](#12-revision-history).
+> **Living document.** During the build (milestones M0 to M5 in [ROADMAP.md](ROADMAP.md)) this
+> document is updated at each milestone boundary, not on every commit. Code leads, the document
+> follows. Two exceptions must be updated in the same change set that alters them, because
+> everything downstream couples to them: **section 6 (data model and provenance contract)** and
+> **section 7 (interface contract)**. Once the service is deployed at M6, the same-change-set rule
+> extends to the whole document.
 
 | | |
 |---|---|
-| **Status** | Draft, pre-implementation |
+| **Status** | Design, pre-implementation. Nothing in section 5 or later is built yet. |
 | **Owner** | Vijay Ananth Karunanithi |
-| **Last updated** | 2026-07-07 |
-| **Version** | 0.1.0 |
+| **Last updated** | 2026-07-29 |
+| **Version** | 0.2.0 |
 
 ---
 
-## 1. Overview
+## 1. Purpose
 
-FinRAG is a retrieval-augmented question-answering system for financial and regulatory documents (annual reports, BaFin filings). It answers natural-language questions grounded strictly in a document corpus and returns **verifiable citations** (page number and bounding-box region) for every claim. A self-correction pass validates answers before they are returned, and low-confidence responses are flagged rather than emitted as fact.
+This document is the authoritative technical reference for disclosure-rag. It records the problem,
+the principles the design follows, the two-plane architecture, the contracts that are expensive to
+change, and how the system will be measured.
 
-The system is built for a compliance context, where an unsupported or incorrect answer is more costly than an abstention.
+It is written before implementation on purpose. Sections 6 and 7 define interfaces that everything
+else couples to, and deciding those on paper is cheaper than discovering them in week three.
+Sections 11 and 12 are deliberately thin, because they describe problems I will not have for
+several weeks and any detail I wrote now would be a guess.
 
-## 2. Goals and non-goals
+## 2. The problem, stated precisely
 
-**Goals**
-- High-fidelity retrieval over layout-heavy documents (tables, hierarchical sections, footnotes).
-- Answer grounding with page- and region-level citations.
-- Self-verification (LLM-as-a-judge) and explicit confidence reporting.
-- Reproducible retrieval quality measured by an automated evaluation suite.
-- Deployable as a containerized service.
+A reader checking a published annual report asks two kinds of question:
 
-**Non-goals**
-- Model fine-tuning (covered by a separate project).
-- General-purpose chat unrelated to the ingested corpus.
-- Automated regulatory decision-making. The system assists a human reviewer, it does not replace one.
+1. **Locate.** Where in this 400-page document is the disclosure about X, and what does it say?
+2. **Reconcile.** The narrative says revenue "grew to roughly 1.2 billion euro". Does that agree
+   with the figure in the audited income statement?
 
-## 3. System architecture
+Generic retrieval handles neither well. Question 1 fails because flattening a PDF to plain text
+destroys the table structure that carries the meaning, and because a chunk-level citation ("it is
+somewhere in this passage") is not a usable answer for someone who has to verify it. Question 2
+fails because it is not a similarity problem at all: it is an extraction problem followed by a
+normalisation problem followed by an arithmetic comparison, and language models are unreliable at
+the last two.
 
-```mermaid
-flowchart LR
-    subgraph Ingestion
-        A[Source PDFs / S3] --> B[Layout-aware parser<br/>LlamaParse / ColPali]
-        B --> C[Hierarchical chunker<br/>parent-child]
-        C --> D[Embedding model]
-        D --> E[(Qdrant<br/>dense + sparse)]
-    end
-    subgraph Query
-        Q[User question] --> AG[Answer agent<br/>OpenAI Agents SDK]
-        AG -->|retrieve tool via MCP| R[Hybrid retriever<br/>dense + BM25]
-        R --> RR[Cross-encoder rerank<br/>Cohere]
-        RR --> AG
-        AG --> J[LLM-as-a-judge<br/>self-check]
-        J --> OUT[Answer + citations + confidence]
-    end
-    E --- R
+There is a second, harder problem hiding behind both, and it is the one this project is actually
+about. **A retrieval system can produce a correct answer while citing the wrong place.** Standard
+RAG evaluation cannot see this, because it scores the answer text and never checks whether the
+citation points anywhere useful. An answer that is right for the wrong reason is worse than useless
+to a reviewer whose entire job is verification.
+
+### 2.1 The property of ESEF that makes this measurable
+
+Since financial year 2020, issuers on EU regulated markets must file their annual financial report
+under the European Single Electronic Format (Delegated Regulation (EU) 2019/815). The format is
+XHTML with **Inline XBRL**: the machine-readable tag is not a sidecar file, it wraps the human-
+readable number in the rendered document.
+
+```html
+<ix:nonFraction name="ifrs-full:Revenue" contextRef="FY2024" unitRef="EUR"
+                scale="6" decimals="-6">1,204</ix:nonFraction>
 ```
 
-## 4. Component design
+Three consequences follow, and together they are the reason this project exists:
 
-### 4.1 Ingestion pipeline
-- **Parser:** LlamaParse or ColPali, selected to preserve table structure and page geometry. Output retains bounding-box coordinates per block.
-- **Chunker:** parent–child hierarchical chunking. Child chunks are embedded for retrieval; the parent provides surrounding context to the LLM.
-- **Embeddings:** dense vectors plus a sparse (BM25) representation stored alongside for hybrid search.
+1. **The value, unit, scale, sign and period are declared**, so no extraction is needed to know
+   what the number means.
+2. **The tag has a position in the rendered document.** Render the XHTML in a browser, ask the
+   element for its geometry, and you have a bounding box for that fact. This is gold provenance
+   obtained mechanically, at scale, with no hand annotation.
+3. **Only the primary statements are tagged this way.** The management report, the highlights page
+   and the narrative discussion repeat the same figures in prose, untagged. That asymmetry is the
+   opportunity: **the tagged statements are an oracle, and the untagged narrative is the system
+   under test.**
 
-### 4.2 Retrieval
-- **Hybrid search** in Qdrant: dense semantic similarity fused with sparse lexical matching. Rationale: financial documents contain exact figures, codes, and ticker symbols that dense embeddings under-retrieve.
-- **Reranking:** Cohere cross-encoder reorders the fused candidate set before it reaches the LLM.
+### 2.2 What this does not give me
 
-### 4.3 Answer agent
-- Implemented with the **OpenAI Agents SDK**. Loop: plan → call retrieval tool → synthesize → self-check.
-- The retrieval layer is exposed as an **MCP server**, so the agent consumes it as a standard tool and the same capability is reusable by any MCP client.
+Being explicit, because this is where the idea could fail and section 14 tracks it as the main risk:
 
-### 4.4 Self-correction
-- An LLM-as-a-judge step scores answer faithfulness against retrieved context. Answers below a confidence threshold are flagged for human review rather than returned as authoritative.
+- Tagging covers the primary statements. Notes are block-tagged at best. Narrative is not tagged.
+- A figure in prose may be derived (a growth rate, a margin) rather than a restatement of a tagged
+  fact, in which case there is no direct label.
+- Displayed text and fact value differ. `1,204` with `scale="6"` is 1204000000. Any comparison that
+  ignores `scale`, `sign` and `contextRef` will silently score prior-year comparatives as current.
 
-## 5. Data model and storage
+M0 in the roadmap exists solely to measure how much of the narrative is actually resolvable, with a
+documented abort threshold, before I commit weeks to the design that assumes it.
 
-- **Vector store:** Qdrant collection `finrag_documents`. Each point carries: embedding, sparse vector, source document id, page number, bounding box, parent-chunk reference, and text.
-- **Source documents:** object storage (S3 in cloud; local filesystem in dev).
-- No PII is expected in the corpus; corpus is public/mock financial filings.
+## 3. Design principles
 
-## 6. Interface contract
+These are the rules the rest of the document follows. Where a later section makes a choice that
+looks odd, it is usually one of these being enforced.
 
-- **Transport:** FastAPI, async endpoints.
-- `POST /query` → `{ question: str, top_k?: int }` returns `{ answer: str, citations: [{document_id, page, bbox}], confidence: float, flagged: bool }`.
-- `POST /ingest` → registers and processes a document into the collection.
-- `GET /health` → liveness/readiness.
-- Contracts are defined with Pydantic models; breaking changes require a version bump and a revision-history entry.
+| | Principle | Why it is here |
+|---|---|---|
+| **P1** | **Provenance is a type, not metadata.** A list of spans flows unbroken from parse to API response and is never flattened into a string. | The moment text is concatenated, the link back to a page region is gone and cannot be recovered. This is the single most common way citation quality dies. |
+| **P2** | **The oracle never touches the serving path.** The label plane reads Inline XBRL. The serving plane reads only the rendered PDF. | If the pipeline can see the tags, the benchmark measures nothing. This separation is what makes the numbers honest. |
+| **P3** | **The model proposes, the runtime disposes.** The LLM emits a structured claim. Normalisation, arithmetic and equality happen in Python. | Language models are unreliable at arithmetic and at unit handling. A comparison I can unit-test is worth more than one I have to trust. |
+| **P4** | **Abstention is a designed output, not an error path.** | The product claim is that an unverifiable answer is worse than no answer. That has to be a first-class response with its own metric, not an exception. |
+| **P5** | **Determinism where it is checkable.** The CI gate uses fixed relevance judgements. Model-judged metrics run off the critical path. | A build that goes red because a judge model felt different today teaches me to ignore the build. |
+| **P6** | **Every external dependency sits behind a seam.** Parser, embedder, reranker and generator are protocols. | Keeps the expensive-looking choices cheap to reverse, which is what lets me defer them honestly. |
+| **P7** | **Re-ingestion is idempotent and one command.** | Chunking strategy is the parameter I will most want to experiment with. If re-ingesting is painful, I will not run the experiment and the choice becomes folklore. |
 
-## 7. Evaluation strategy
+## 4. System context
 
-- **Ragas** measures retrieval hit-rate and answer faithfulness against a labelled question/answer set derived from mock filings.
-- Evaluation runs in CI as a **regression gate**: a drop below baseline thresholds fails the build.
-- Baselines are recorded here once established (see Revision history).
+The defining structural decision is that one source document feeds two independent paths which meet
+only inside the evaluation harness.
 
-## 8. Security and compliance
+```mermaid
+flowchart TB
+    SRC["ESEF report package<br/>XHTML with Inline XBRL"]
 
-- Secrets via environment / `.env`, never committed.
-- Prompt-injection consideration: retrieved document text is treated as untrusted input; the answer prompt isolates instructions from content and enforces an output schema.
-- Corpus contains no personal data; if that changes, this section and the data model must be revised.
+    subgraph LP["Label plane · offline · the oracle"]
+        direction TB
+        AR["Arelle<br/>fact extraction"]
+        PW["Headless Chromium<br/>element geometry"]
+        LED[("Fact ledger<br/>value · unit · scale<br/>period · page · bbox")]
+        AR --> LED
+        PW --> LED
+    end
 
-## 9. Deployment and infrastructure
+    subgraph SP["Serving plane · online · the system under test"]
+        direction TB
+        RND["Render to PDF"]
+        PRS["Block parse<br/>text + bbox"]
+        CHK["Span-preserving<br/>chunker"]
+        IDX[("Qdrant<br/>dense + sparse")]
+        RET["Hybrid retrieval<br/>and rerank"]
+        GEN["Grounded answer<br/>with abstention"]
+        RND --> PRS --> CHK --> IDX --> RET --> GEN
+    end
 
-- **Local:** Docker; Qdrant runs as a container.
-- **Cloud:** AWS. Documents in S3; service on ECS/EKS. Bedrock is an optional managed-model path.
-- **CI/CD:** GitHub Actions for lint, test, and the Ragas eval gate.
+    EVAL{{"Evaluation harness"}}
+    RPT["Metrics report"]
 
-## 10. Observability
+    SRC ==> LP
+    SRC ==> SP
+    LED -. "gold labels" .-> EVAL
+    GEN -. "predictions" .-> EVAL
+    EVAL --> RPT
 
-- Structured logging with request correlation.
-- Latency and token-usage metrics per request.
-- Retrieval traces retained for debugging low-confidence answers.
+    classDef oracle fill:#e8f0fe,stroke:#3367d6,color:#12305e
+    classDef sut fill:#fdf0e6,stroke:#c26401,color:#5a2d00
+    class LP oracle
+    class SP sut
+```
 
-## 11. Build roadmap
+The dotted edges matter. They are the only points at which the two planes touch, and they touch
+after the serving plane has committed to an answer. Principle **P2** is enforced structurally: the
+serving plane has no code path that can read an `ix:` element.
 
-1. Ingestion + layout-aware parsing.
-2. Hybrid retrieval + reranking.
-3. Answer agent + self-correction + citations.
-4. MCP retrieval server.
-5. Ragas evaluation harness + recorded baselines.
-6. FastAPI service + Docker.
-7. AWS deployment + citation-viewer UI.
+## 5. The label plane
 
-## 12. Revision history
+Offline, run once per filing, output committed as a dataset. This is the part of the system that
+does not exist anywhere else and it is built first.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F as Filing store
+    participant A as Arelle
+    participant B as Chromium
+    participant L as Fact ledger
+
+    F->>A: report.xhtml
+    A-->>L: facts: concept, value, unit,<br/>scale, sign, contextRef
+    Note over A,L: contextRef resolves the period and entity.<br/>Ignoring it scores prior-year figures as current.
+
+    F->>B: report.xhtml
+    B->>B: render at fixed viewport and DPI
+    loop for each ix: element
+        B->>B: getBoundingClientRect()
+    end
+    B-->>L: element id, page index, bbox
+    B-->>F: report.pdf (print to PDF, same geometry)
+
+    Note over L: join on element id<br/>one row per tagged fact,<br/>fully located
+```
+
+Two details that decide whether this works:
+
+- **The rendered PDF and the geometry must come from the same rendering pass.** If the boxes are
+  read from a browser viewport and the serving plane parses a PDF produced some other way, the
+  coordinate systems diverge and every measurement is wrong. One pass, one coordinate space,
+  normalised to the page box.
+- **The PDF handed to the serving plane carries no tags.** It is the same artefact a human reviewer
+  would open. That is what makes the comparison fair.
+
+The output is a `FactLedger`: one row per tagged fact, carrying both what the number means and
+where it sits. It serves three purposes: gold labels for citation accuracy, the oracle for
+reconciliation, and a structured store the query router can answer numeric questions from directly.
+
+## 6. Data model and provenance contract
+
+> Same-change-set rule applies to this section.
+
+```mermaid
+erDiagram
+    DOCUMENT ||--o{ PAGE : "renders to"
+    DOCUMENT ||--o{ FACT : "declares"
+    DOCUMENT ||--o{ BLOCK : "parses to"
+    BLOCK ||--|| SPAN : "occupies"
+    FACT ||--|| SPAN : "located at"
+    CHUNK }o--|| DOCUMENT : "belongs to"
+    CHUNK ||--o{ SPAN : "covers"
+    CHUNK }o--o| CHUNK : "has parent"
+    ANSWER ||--o{ CITATION : "supports"
+    CITATION }o--|| CHUNK : "resolves to"
+    CITATION ||--o{ SPAN : "highlights"
+
+    DOCUMENT {
+        string document_id PK
+        string issuer
+        int fiscal_year
+        string content_hash
+    }
+    SPAN {
+        int page
+        float x0
+        float y0
+        float x1
+        float y1
+    }
+    FACT {
+        string fact_id PK
+        string concept
+        decimal value
+        string unit
+        int scale
+        int sign
+        string period
+    }
+    CHUNK {
+        string chunk_id PK
+        string text
+        int token_count
+    }
+    CITATION {
+        string chunk_id FK
+        float score
+    }
+```
+
+The load-bearing decision is the cardinality on `CHUNK ||--o{ SPAN`. **A chunk carries a list of
+spans, not one page and one box.** The original design had a single `page` and a single `bbox` per
+citation, which cannot represent a table that continues across a page break. That is not an edge
+case here, it is the motivating example from section 2. Full reasoning in
+[ADR-0004](adr/0004-provenance-contract.md).
+
+Coordinates are stored normalised to the page box, so they survive a change of render DPI without
+invalidating the index.
+
+## 7. Interface contract
+
+> Same-change-set rule applies to this section.
+
+`POST /query`
+
+```jsonc
+// request
+{ "question": "What was revenue for FY2024?", "top_k": 10 }
+
+// response
+{
+  "answer": "Revenue for FY2024 was EUR 1,204 million.",
+  "status": "answered",              // answered | abstained
+  "citations": [
+    {
+      "document_id": "de-example-2024",
+      "chunk_id": "c_00417",
+      "spans": [                      // always a list, see section 6
+        { "page": 96, "x0": 0.12, "y0": 0.34, "x1": 0.88, "y1": 0.41 }
+      ],
+      "quote": "Revenue rose to EUR 1,204 million"
+    }
+  ],
+  "support": { "claims_total": 2, "claims_supported": 2 },
+  "route": "narrative"                // narrative | ledger | reconciliation
+}
+```
+
+`GET /page/{document_id}/{page}.png?spans=...` returns the rendered page with the given regions
+outlined. This exists so a citation is verifiable in one click, and it is also what produces the
+screenshot in the README.
+
+`POST /ingest` registers a document and runs the serving-plane pipeline. Idempotent by
+`content_hash` per **P7**: re-ingesting the same document replaces its chunks rather than
+duplicating them.
+
+`GET /health` reports liveness, version and environment. This is the only endpoint implemented
+today.
+
+Contracts are Pydantic models. A breaking change requires a version bump and a revision-history
+entry.
+
+## 8. Query routing
+
+Not every question should reach the vector index. Numeric questions about tagged facts have an
+exact answer in the ledger, and retrieving it approximately would be a downgrade.
+
+```mermaid
+flowchart TD
+    Q["Question"] --> C{"Classify"}
+    C -->|"names a tagged concept<br/>and a period"| L["Ledger lookup"]
+    C -->|"asserts a figure<br/>to be checked"| R["Reconciliation"]
+    C -->|"otherwise"| N["Hybrid retrieval"]
+
+    L --> LA["Exact value<br/>span from ledger"]
+    R --> R1["Retrieve narrative mention"]
+    R1 --> R2["Extract structured claim<br/>value · unit · scale · period"]
+    R2 --> R3["Resolve to ledger fact<br/>by concept and contextRef"]
+    R3 --> R4["Compare in Python<br/>with tolerance policy"]
+    N --> NA["Generate with<br/>span attribution"]
+
+    LA --> G{"Supported?"}
+    R4 --> G
+    NA --> G
+    G -->|yes| OUT["Answer with citations"]
+    G -->|no| ABS["Abstain and return<br/>nearest evidence"]
+
+    classDef exact fill:#e6f4ea,stroke:#137333,color:#0b3d1c
+    classDef soft fill:#fef7e0,stroke:#b06000,color:#5c3200
+    class L,LA exact
+    class N,NA soft
+```
+
+Step `R4` is principle **P3** made concrete. The model's only job in the reconciliation path is to
+turn a sentence into `{value, unit, scale, period}`. Scaling, sign handling and the tolerance
+comparison run in Python, where they are unit-testable and cannot hallucinate.
+
+The tolerance policy is a product decision, not a prompt: a narrative figure is treated as agreeing
+with a tagged fact when it rounds to the same value at the precision the narrative itself uses.
+"Roughly 1.2 billion" agrees with 1,204,000,000. "1.3 billion" does not.
+
+## 9. Evaluation design
+
+The system exists to produce these numbers. They are the deliverable, not a by-product.
+
+| Metric | What it answers | Labels from | Gate |
+|---|---|---|---|
+| recall@k, nDCG@10 | Did the right passage come back? | Ledger spans plus hand-labelled narrative | CI, deterministic |
+| **citation IoU@0.5** | **Does the citation point at the right region?** | Ledger bounding boxes | CI, deterministic |
+| Reconciliation precision / recall | Are narrative figures correctly agreed or flagged? | Ledger facts | CI, deterministic |
+| Abstention precision / recall | When it declines, was it right to? | Hand-labelled unanswerables | CI, deterministic |
+| Risk-coverage curve, AURC | Where should the abstention threshold sit? | Derived from the above | Reported, not gated |
+| Faithfulness, answer relevance | Is the prose grounded? | Model-judged | Nightly, off critical path |
+| p95 latency, cost per query | Is it usable and affordable? | Instrumentation | Reported |
+
+Citation IoU is the row this project is for. It is the claim in section 2 that standard evaluation
+cannot see, and I have not found it published for financial-document RAG.
+
+**Question set.** 100 paired questions, stratified 40 exact-figure, 30 narrative, 30 unanswerable,
+run through every configuration. The stratification is not decoration: hybrid retrieval's advantage
+lives almost entirely in the exact-figure stratum, and pooling the strata dilutes it toward nothing.
+
+**Statistics.** These are paired binary outcomes, so results are reported as a paired bootstrap 95%
+confidence interval on the delta, not two bare point estimates. At n=100 with roughly 25% discordant
+pairs, a 15-point recall gap is detectable at about 80% power. At n=50 only gaps above 20 points are
+detectable, and at n=30 the result is an anecdote. That is the reasoning behind the sample size.
+
+**Baseline.** Every claim in section 3 of [STACK.md](STACK.md) is a hypothesis until there is a
+delta row for it. The ablation ladder is dense-only, then plus BM25, then plus rerank, then plus
+span-preserving chunking. No component is described as helping until its row exists.
+
+**Rule.** Metric definitions and the baseline are fixed before any tuning. Deciding what counts as
+success after seeing results is how eval tables become worthless.
+
+## 10. Failure modes
+
+The taxonomy is fixed now so that failures get counted rather than fixed ad hoc. Counts per class
+go in the results table.
+
+| Class | Expected cause | Handling |
+|---|---|---|
+| Table continues across a page break | Chunk spans two pages | Multi-span citation (section 6) |
+| Multi-level or spanning table headers | Header path lost in parse | Track as parse-quality defect |
+| Figure present but derived | Narrative states a ratio, not a tagged fact | Out of scope for M4, counted |
+| Prior-year comparative retrieved | `contextRef` ignored | Must fail loudly, never silently |
+| Scale or unit mismatch | `scale` attribute dropped | Deterministic comparison catches it |
+| Genuinely unanswerable | Question has no support in corpus | Must abstain, scored |
+| Adversarial instruction in document | Prompt injection via document text | Section 11 |
+
+## 11. Security and data protection
+
+Renamed from "security and compliance", which previously promised regulatory content and delivered
+secrets handling.
+
+- **Untrusted content.** Document text is untrusted input. Retrieved passages are isolated from
+  instructions and the output schema is enforced. The concrete threat is white-on-white text in a
+  PDF reading "ignore previous instructions". One adversarial document is in the evaluation set, so
+  this is a tested property rather than an assertion.
+- **Personal data.** The earlier claim that no personal data is expected was wrong. A German annual
+  report contains individualised management board remuneration under section 162 AktG, plus named
+  board members. Public availability does not remove it from the scope of the GDPR. Processing is
+  lawful here, but it has to be stated rather than waved away.
+- **Processing location.** Generation currently uses a US provider. Under **P6** the generator sits
+  behind a seam, so an EU-hosted implementation is a later afternoon rather than a rewrite. The
+  comparison of the two profiles on quality, latency and cost is a planned result, not a promise.
+- **Secrets** come from the environment and are never committed.
+
+Regulatory positioning is deliberately not written here. It is only worth stating against a system
+that can demonstrate it, so it lands with M6.
+
+## 12. Deployment
+
+Local: Docker Compose, with Qdrant as a container. The service image runs as a non-root user and
+carries a healthcheck.
+
+Cloud, when there is something worth deploying: a single container on a small managed host. This is
+one stateless service and one database, so a container platform is the right size and Kubernetes
+is not. The earlier plan said "ECS/EKS", which was two options presented as a decision.
+
+## 13. Observability
+
+Structured logs with a request correlation id, from the first request handler rather than
+retrofitted. Per-stage timings (render, parse, embed, retrieve, rerank, generate) because the
+latency table in section 9 needs the breakdown. Token and cost counters per request.
+
+Retrieval traces for low-confidence answers are retained. This is debugging support and is not
+described as an audit trail, because an audit trail would need append-only storage, index snapshot
+identifiers and replay, which is M6 work.
+
+## 14. Open questions and risks
+
+| | Risk | Impact | How it gets resolved |
+|---|---|---|---|
+| **R1** | Narrative prose may not contain enough figures resolvable to tagged facts. | Removes the reconciliation capability and the free-label advantage. This is the main risk. | **M0 spike, with a documented abort threshold.** See [spikes/esef_probe](../spikes/esef_probe/README.md). |
+| **R2** | Browser geometry may not map cleanly onto the printed PDF. | Drops citations from region level to page level. | M0 measures it. If it fails, the README says page level and the IoU metric is dropped rather than fudged. |
+| **R3** | German compound nouns break naive lexical matching. | Weakens the sparse half of hybrid retrieval. | Decided with a measurement in M2, not by assertion. |
+| **R4** | Scope creep back toward the original stack. | The project does not finish. | The cut list in [ADR-0005](adr/0005-no-agent-framework.md) is explicit about what is never built. |
+
+## 15. Revision history
 
 | Date | Version | Change | Author |
 |---|---|---|---|
+| 2026-07-29 | 0.2.0 | Reframed around the two-plane architecture with an Inline XBRL oracle. Replaced the single-bbox citation model with multi-span provenance. Removed the agent framework, the MCP server, and the managed-model and Kubernetes paths. Added the M0 abort gate, the evaluation design with sample-size reasoning, and the failure taxonomy. Corrected the personal-data claim. | Vijay Ananth Karunanithi |
 | 2026-07-07 | 0.1.0 | Initial technical documentation (pre-implementation). | Vijay Ananth Karunanithi |
