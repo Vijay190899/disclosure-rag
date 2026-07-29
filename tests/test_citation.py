@@ -33,3 +33,9 @@ def test_words_are_not_figures() -> None:
 def test_a_year_counts_as_a_figure() -> None:
     """Deliberate: a year is a plausible answer and excluding it would bias scoring."""
     assert looks_numeric("2022")
+
+
+def test_an_ungrouped_run_of_digits_is_a_figure() -> None:
+    """The first regex required grouped thousands and silently rejected these."""
+    assert looks_numeric("1204")
+    assert looks_numeric("12345678")

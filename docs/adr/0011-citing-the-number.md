@@ -54,24 +54,49 @@ Same corpus, same 120 questions, BM25, after this change and the three measureme
 alongside it (corpus-native German dates in queries, seeded question sampling, a real-tokenizer
 window guard).
 
-| chunk tokens | recall@1 | recall@5 | recall@10 | shown first when found | citation IoU@0.5 | mean citation IoU |
-|---|---|---|---|---|---|---|
-| 300 | 0.308 | 0.542 | 0.633 | 0.487 | 0.225 | 0.215 |
-| 600 | **0.350** | **0.567** | **0.692** | 0.506 | **0.242** | 0.230 |
+| chunk tokens | recall@1 | recall@5 | recall@10 | shown first when found |
+|---|---|---|---|---|
+| 300 | 0.308 | 0.542 | 0.633 | 0.487 |
+| 600 | **0.350** | **0.567** | **0.692** | 0.506 |
 
-Two things to read here.
+Recall@1 rose from 0.208 to 0.350, almost entirely from removing the ISO-date tokens that were
+poisoning every query.
 
-**The metric is now informative.** Citation IoU@0.5 of 0.242 against recall@1 of 0.350 are different
-numbers measuring different things. Before this change they were the same number twice.
+### The citation number, and how many figures you are allowed to outline
 
-**The finding the project exists for is finally visible, and it is large.** Retrieval puts the right
-passage somewhere in the top ten for **69%** of questions. It outlines the correct figure for
-**24%**. That is a 45-point gap between "the system found it" and "the system can show you where it
-is", and no answer-level or passage-level metric can see it.
+`max_spans` controls how many figures a citation highlights. It looked like a tuning knob and it is
+not: it is the difference between what a reader gets and an upper bound.
 
-That gap is the result. It is not a tuning problem and it does not go away with a better retriever,
-because it measures a different failure: knowing which passage is relevant is not the same as knowing
-which cell in it answers the question.
+| figures outlined | citation IoU@0.5 | mean citation IoU |
+|---|---|---|
+| **1, which is what a reader gets** | **0.058** | 0.056 |
+| 2 | 0.192 | 0.181 |
+| 3 | 0.225 | 0.214 |
+
+I had written up 0.225 before noticing that it scores the best of three candidates against gold. A
+product outlines one region. **The honest figure is 0.058.**
+
+## The result
+
+**Retrieval puts the right passage in the top ten for 69% of questions. Asked to outline the single
+figure that answers the question, it is correct 5.8% of the time.**
+
+That is the finding, and it is far larger than I expected when I started measuring. No answer-level
+metric sees it, and no passage-level metric sees it either: recall@10 of 0.692 and citation IoU of
+0.058 describe the same run.
+
+The mechanism is now legible rather than inferred. A statement row carries several periods' values on
+one line. The line-based selector finds the right row and then cannot choose among its numbers,
+because the information that distinguishes them, the column header, is not on the line. So it is
+right about the row and wrong about the cell, almost every time.
+
+This is the same constraint diagnosed in ADR-0010 from the retrieval side, now visible in the citation
+metric where it belongs. It is not a tuning problem and a better retriever will not move it: knowing
+which passage is relevant is a different problem from knowing which cell in it answers the question.
+
+It also makes the next rung a prediction rather than a hope. Header propagation carries the column
+header into the chunk, which is exactly the missing information, so it should move 0.058 and should
+leave recall roughly alone. If it moves recall instead, my explanation is wrong.
 
 ## Consequences
 

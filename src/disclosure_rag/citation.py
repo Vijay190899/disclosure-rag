@@ -28,9 +28,15 @@ from disclosure_rag.ingest.chunker import Chunk
 from disclosure_rag.provenance import Span
 from disclosure_rag.retrieval.lexical import tokenize
 
-# Same shape as the numeric pattern used elsewhere: keeps grouping and decimal
-# separators inside one token, so "5.996,4" is a candidate rather than three.
-NUMBER = re.compile(r"^-?\(?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\)?$")
+# Identifies a token as a figure. Deliberately permissive about format: the job
+# here is "is this a number", not "is this well-formed grouping", and the digit
+# count below does the filtering.
+#
+# The first version required grouped thousands, so it rejected any plain run of
+# four or more digits. That silently excluded "2022" and any ungrouped figure
+# like "1204", both of which appear throughout these filings, and a test caught
+# it only because the year case was written down explicitly.
+NUMBER = re.compile(r"^-?\(?\d[\d.,]*\)?$")
 
 # Below this many digits a figure carries too little information to be worth
 # citing as the answer. Page numbers and note references live here.

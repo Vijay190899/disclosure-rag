@@ -79,6 +79,7 @@ def run_retriever(
     questions: list[Question],
     top_k: int = 10,
     pdf_for: dict[str, Path] | None = None,
+    max_cited: int = 1,
 ) -> dict[str, Result]:
     retriever.index(chunks)
     results: dict[str, Result] = {}
@@ -91,7 +92,7 @@ def run_retriever(
         cited: list[Span] = []
         if hits and pdf_for and question.document_id in pdf_for:
             cited = select_numeric_spans(
-                pdf_for[question.document_id], hits[0].chunk, question.text
+                pdf_for[question.document_id], hits[0].chunk, question.text, max_spans=max_cited
             )
         results[question.question_id] = Result(
             question_id=question.question_id,
@@ -157,6 +158,13 @@ def main() -> int:
     )
     parser.add_argument("--overlap-tokens", type=int, default=80)
     parser.add_argument(
+        "--max-cited",
+        type=int,
+        default=1,
+        help="how many figures a citation outlines. 1 is what a reader gets; "
+        "higher values are an upper bound and flatter the score",
+    )
+    parser.add_argument(
         "--dense-model",
         default=None,
         help="enable the dense and hybrid rungs with this fastembed model",
@@ -181,7 +189,7 @@ def main() -> int:
 
     for retriever in ladder:
         print(f"\n[eval] running {retriever.name}")
-        results = run_retriever(retriever, chunks, questions, args.top_k, pdf_for)
+        results = run_retriever(retriever, chunks, questions, args.top_k, pdf_for, args.max_cited)
         scores = score_run(questions, results)
         runs.append((retriever.name, results, scores))
         print(render_scores(retriever.name, scores))
