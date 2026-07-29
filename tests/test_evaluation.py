@@ -24,12 +24,6 @@ def test_concept_names_become_readable() -> None:
     assert humanise_concept("ifrs-full:PropertyPlantAndEquipment") == "property plant and equipment"
 
 
-def test_instant_and_duration_periods_read_differently() -> None:
-    """Phrased in German: questions must share a language with the documents."""
-    assert describe_period("instant:2022-12-31") == "zum 2022-12-31"
-    assert "2022-01-01 bis 2022-12-31" in describe_period("2022-01-01/2022-12-31")
-
-
 def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
     fact = Fact(
         fact_id="f1",
@@ -191,3 +185,51 @@ def test_every_tagged_occurrence_of_a_figure_is_gold() -> None:
     questions = questions_from_ledger(ledger)
     assert len(questions) == 1, "one question per concept and period"
     assert set(questions[0].gold_spans) == {GOLD, elsewhere}
+
+
+def test_periods_are_written_the_way_the_corpus_writes_them() -> None:
+    """ISO dates were poisoning every query.
+
+    The lexical tokenizer splits hyphens, so "2022-01-01 bis 2022-12-31" became
+    six numeric tokens matching figures on nearly every table page. German
+    format survives tokenisation as one token per date. ADR-0011.
+    """
+    assert describe_period("instant:2022-12-31") == "zum 31.12.2022"
+    assert describe_period("2022-01-01/2022-12-31") == "im Geschäftsjahr 2022"
+    assert describe_period("2022-04-01/2022-09-30") == (
+        "für den Zeitraum 01.04.2022 bis 30.09.2022"
+    )
+
+
+def test_a_question_carries_no_stray_numeric_tokens() -> None:
+    from disclosure_rag.retrieval.lexical import tokenize
+
+    text = questions_from_ledger(ledger_with())[0].text
+    numerals = [token for token in tokenize(text) if token.replace(".", "").isdigit()]
+    assert numerals == ["31.12.2022"], f"unexpected numeric tokens in {text!r}"
+
+
+def test_question_sampling_is_seeded_and_not_document_order() -> None:
+    """Taking the first N in ledger order sampled the front of each filing."""
+    facts = [
+        LocatedFact(
+            fact=Fact(
+                fact_id=f"f{i:03d}",
+                concept=f"x:Concept{i}",
+                displayed="1",
+                value=Decimal(i + 1),
+                period="instant:2022-12-31",
+            ),
+            span=GOLD,
+        )
+        for i in range(50)
+    ]
+    ledger = FactLedger(
+        document_id="doc",
+        facts=facts,
+        concept_labels={f"x:Concept{i}": f"Posten {i}" for i in range(50)},
+    )
+    first = [q.question_id for q in questions_from_ledger(ledger, limit_per_document=10)]
+    again = [q.question_id for q in questions_from_ledger(ledger, limit_per_document=10)]
+    assert first == again, "sampling must be reproducible"
+    assert first != [f"doc:ef:f{i:03d}" for i in range(10)], "must not be document order"

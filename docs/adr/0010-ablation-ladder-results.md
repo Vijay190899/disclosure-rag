@@ -85,34 +85,39 @@ Paired bootstrap, 95%, recall@5:
 its first measurement, and by the rule in ADR-0006 that a component which does not earn its row
 comes out of the stack, hybrid is not justified as a default.
 
-## Result 3: where it does earn its place
+## Result 3: a split I over-read, corrected
+
+> **Correction, 2026-07-30.** An adversarial review of this ADR caught an overclaim, and it is worth
+> leaving the original reasoning visible above the correction rather than quietly editing it out.
 
 Splitting the same run by where the question's label came from. "Own" means the label the filing
 itself declares, which appears verbatim in its text. "Pooled" means another issuer's label for the
 same concept, so the query wording and the document wording genuinely differ.
 
-| recall@5 | own label (n=86) | pooled label (n=34) |
-|---|---|---|
-| bm25 | **0.314** | 0.029 |
-| dense | 0.035 | 0.059 |
-| hybrid | 0.221 | **0.088** |
+| recall@5 | own label (n=86) | pooled label (n=34) | pooled, as a count |
+|---|---|---|---|
+| bm25 | **0.314** | 0.029 | **1 question** |
+| dense | 0.035 | 0.059 | **2 questions** |
+| hybrid | 0.221 | 0.088 | **3 questions** |
 
-This is the honest version of the hybrid argument, and it is narrower than what DECISIONS.md
-claimed. Where the query uses the document's own wording there is no vocabulary gap to bridge, and
-lexical retrieval wins decisively; embeddings add nothing and dilute the ranking. Where the wording
-differs, lexical collapses to 0.029 and hybrid triples it to 0.088.
+**The pooled column is one, two and three questions out of 34. It is not a finding and I should not
+have written it up as one.** What I originally wrote here was that "lexical collapses to 0.029 and
+hybrid triples it to 0.088", which is a true description of 1 versus 3 questions and a misleading
+description of anything else. Tripling a count of one is not evidence.
 
-So the original reasoning was right about the mechanism and wrong about the conclusion. Exact
-figures and identifiers do favour lexical matching, which is exactly why hybrid is not a free
-improvement: fusing a weaker retriever into a stronger one costs ranking positions.
+I also cited "the interval on the pooled delta excludes zero" as support. That interval was computed
+on all 120 questions, not on the pooled subset. Quoting a whole-sample interval beside a subgroup
+mean is exactly the error the paired bootstrap was supposed to prevent me from making.
 
-**Decision: BM25 remains the default. Hybrid is retained as a configurable path, justified only for
-queries whose wording is not the document's own.** Revisit when a longer-context embedder makes the
-dense side competitive, which is a different experiment.
+**What survives.** The own-label column is properly powered at n=86, and there BM25 beats hybrid
+0.314 to 0.221. That alone supports the decision below. The mechanism I proposed for the pooled
+group, that dense retrieval should help where the query wording is not the document's own, remains
+an untested hypothesis, and it needs a pooled group an order of magnitude larger before it is worth
+a sentence.
 
-Caveat stated plainly: n=34 for the pooled group. The direction is consistent and the interval on
-the pooled delta excludes zero, but this is one small group in one language on three filings, and it
-should not be quoted as more than an indication.
+**Decision: BM25 remains the default**, on the strength of the own-label result. Hybrid stays in the
+codebase as a configurable path but with **no measured justification**, which is a weaker statement
+than the one I made first. Revisit with a longer-context embedder and a properly sized pooled group.
 
 ## What these numbers are not
 

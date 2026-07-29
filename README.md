@@ -186,22 +186,25 @@ chunks.
 
 **The ablation ladder**, and the decision it overturned:
 
-| Retriever | recall@5 | | recall@5, own label (n=86) | recall@5, pooled label (n=34) |
-|---|---|---|---|---|
-| bm25 | **0.233** | | **0.314** | 0.029 |
-| dense (multilingual MiniLM) | 0.042 | | 0.035 | 0.059 |
-| hybrid (reciprocal rank fusion) | 0.183 | | 0.221 | **0.088** |
+| Retriever | recall@5 (n=120) | recall@5, own label (n=86) |
+|---|---|---|
+| bm25 | **0.233** | **0.314** |
+| dense (multilingual MiniLM) | 0.042 | 0.035 |
+| hybrid (reciprocal rank fusion) | 0.183 | 0.221 |
 
 Paired bootstrap 95% interval on recall@5: bm25 to dense **-0.192 [-0.275, -0.117]**, dense to
 hybrid **+0.142 [+0.075, +0.217]**.
 
 **Hybrid retrieval loses to plain BM25**, so the decision I recorded on day one and was most
-confident about does not survive its first measurement. The split shows why. Where a question uses
-the document's own wording there is no vocabulary gap, lexical matching wins outright, and adding
-embeddings only dilutes the ranking. Where the wording differs, lexical collapses to 0.029 and
-hybrid triples it. The original reasoning was right about the mechanism and wrong about the
-conclusion, so BM25 is now the default and hybrid is a configurable path with a stated condition.
-Full reasoning and caveats in [ADR-0010](docs/adr/0010-ablation-ladder-results.md).
+confident about does not survive its first measurement. Where a question uses the document's own
+wording there is no vocabulary gap for embeddings to bridge, so lexical matching wins outright and
+fusing a weaker retriever in only costs ranking positions. BM25 is now the default.
+
+I originally reported a third column here, for questions phrased with another issuer's label, and
+claimed it showed hybrid earning its place. An adversarial review caught that: at n=34 those figures
+are **one, two and three questions**, and I had also quoted a whole-sample confidence interval
+beside a subgroup mean. It is not a finding, the column is gone, and the correction is left visible
+in [ADR-0010](docs/adr/0010-ablation-ladder-results.md) rather than edited out.
 
 **These are not good numbers.** This is the easy control stratum, where the question names a concept
 and a period and the answer sits in a table row, and finding it in the top ten half the time is

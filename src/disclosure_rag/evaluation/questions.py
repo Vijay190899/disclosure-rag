@@ -12,8 +12,10 @@ building the metric in a way that could hide it would be self-defeating.
 
 from __future__ import annotations
 
+import random
 import re
 from enum import StrEnum
+from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,20 @@ from disclosure_rag.labels.ledger import FactLedger
 from disclosure_rag.provenance import Span
 
 CAMEL = re.compile(r"(?<!^)(?=[A-Z])")
+
+# Fixed, so the sampled question set is identical on every run and any published
+# number can be regenerated.
+SAMPLE_SEED = 20260730
+
+
+class Candidate(NamedTuple):
+    """A concept and period eligible to become a question, before sampling."""
+
+    key: tuple[str, str]
+    fact_id: str
+    subject: str
+    label_source: str
+    value: str
 
 
 class Stratum(StrEnum):
@@ -62,13 +78,37 @@ def humanise_concept(concept: str) -> str:
     return re.sub(r"\s+", " ", words)
 
 
+def _german_date(iso: str) -> str:
+    """2022-12-31 becomes 31.12.2022, which is how the corpus writes dates."""
+    parts = iso.split("-")
+    if len(parts) != 3:
+        return iso
+    year, month, day = parts
+    return f"{day}.{month}.{year}"
+
+
 def describe_period(period: str) -> str:
-    """Render a ledger period as a phrase, in the language of the corpus."""
+    """Render a ledger period the way the documents write it.
+
+    This was previously emitting ISO dates, which was quietly poisoning every
+    query. The lexical tokenizer splits on hyphens, so "2022-01-01 bis
+    2022-12-31" became six separate numeric tokens, `2022 01 01 2022 12 31`,
+    against roughly four content tokens. Those numerals match figures on nearly
+    every table page in a filing, so the period phrase was actively misleading
+    retrieval rather than merely failing to help.
+
+    German date format fixes both halves of that. It is what the filings
+    actually print, and because the tokenizer treats a full stop as an internal
+    separator, "31.12.2022" survives as a single token instead of three.
+    """
     if period.startswith("instant:"):
-        return f"zum {period.removeprefix('instant:')}"
+        return f"zum {_german_date(period.removeprefix('instant:'))}"
     if "/" in period:
         start, end = period.split("/", 1)
-        return f"für den Zeitraum {start} bis {end}"
+        # A full financial year is how a reader would refer to it.
+        if start.endswith("-01-01") and end.endswith("-12-31") and start[:4] == end[:4]:
+            return f"im Geschäftsjahr {start[:4]}"
+        return f"für den Zeitraum {_german_date(start)} bis {_german_date(end)}"
     return ""
 
 
@@ -116,6 +156,12 @@ def questions_from_ledger(
         locations.setdefault((row.fact.concept, row.fact.period), []).append(row.span)
 
     # Exact figure: one question per distinct concept and period.
+    #
+    # Candidates are collected first and then sampled with a fixed seed. Taking
+    # the first N in ledger order, which is what this did before, is a selection
+    # bias: ledger order is document order, so the sample was the front of each
+    # filing (primary statements) and never the notes.
+    candidates: list[Candidate] = []
     seen: set[tuple[str, str]] = set()
     for row in ledger.facts:
         fact = row.fact
@@ -138,22 +184,35 @@ def questions_from_ledger(
             continue
 
         seen.add(key)
-        period = describe_period(fact.period)
-        text = f"Wie hoch war {subject} {period}?".replace("  ", " ")
+        candidates.append(
+            Candidate(
+                key=key,
+                fact_id=fact.fact_id,
+                subject=subject,
+                label_source=label_source,
+                value=str(fact.value),
+            )
+        )
+
+    if limit_per_document and len(candidates) > limit_per_document:
+        candidates = random.Random(SAMPLE_SEED).sample(candidates, limit_per_document)
+    candidates.sort(key=lambda item: item.fact_id)  # stable order for reporting
+
+    for candidate in candidates:
+        period = describe_period(candidate.key[1])
+        text = f"Wie hoch war {candidate.subject} {period}?".replace("  ", " ")
         questions.append(
             Question(
-                question_id=f"{ledger.document_id}:ef:{fact.fact_id}",
+                question_id=f"{ledger.document_id}:ef:{candidate.fact_id}",
                 document_id=ledger.document_id,
                 text=text,
                 stratum=Stratum.EXACT_FIGURE,
-                gold_spans=locations[key],
-                gold_value=str(fact.value),
-                source_fact_id=fact.fact_id,
-                label_source=label_source,
+                gold_spans=locations[candidate.key],
+                gold_value=candidate.value,
+                source_fact_id=candidate.fact_id,
+                label_source=candidate.label_source,
             )
         )
-        if len(questions) >= limit_per_document:
-            break
 
     for pair in ledger.prose_pairs:
         if not pair.confirmed:

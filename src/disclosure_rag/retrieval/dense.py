@@ -68,20 +68,38 @@ class DenseRetriever:
         self._matrix: Any = None
         self._model: Any = None
 
+    def subword_lengths(self, texts: list[str]) -> list[int]:
+        """True subword counts from the model's own tokenizer.
+
+        The chunker's ``estimate_tokens`` is words times a constant, which is
+        fine for budgeting but cannot verify a hard limit. German compounds run
+        several subwords per word and separator-laden figures such as "5.996,4"
+        cost more again, so the estimate and the real count diverge exactly where
+        this corpus lives. Checking a hard limit against a guess is how the first
+        version of this guard passed chunks the model then truncated.
+        """
+        tokenizer = self._embedder().model.tokenizer
+        return [len(tokenizer.encode(text).ids) for text in texts]
+
     def _check_window(self, chunks: list[Chunk]) -> None:
-        """Refuse to index chunks the model cannot read in full."""
+        """Refuse to index chunks the model cannot read in full.
+
+        Note the tokenizer truncates at the window, so a count equal to the
+        window means "at least this long" and is treated as oversized. That is
+        deliberately conservative: the failure it guards against is invisible.
+        """
         if not chunks or not self.strict_window:
             return
-        oversized = [chunk for chunk in chunks if chunk.token_count > self.window]
+        lengths = self.subword_lengths([chunk.text for chunk in chunks])
+        oversized = [length for length in lengths if length >= self.window]
         if not oversized:
             return
-        worst = max(chunk.token_count for chunk in oversized)
         raise ChunkTooLongForModel(
-            f"{len(oversized)} of {len(chunks)} chunks exceed the {self.window}-token "
-            f"window of {self.model_name} (largest {worst}). The excess is silently "
-            f"truncated, so retrieval would score against a fraction of each chunk. "
-            f"Reduce the chunk budget below {self.window} tokens, or choose a model "
-            f"with a longer window."
+            f"{len(oversized)} of {len(chunks)} chunks reach or exceed the "
+            f"{self.window}-subword window of {self.model_name}, measured with the "
+            f"model's own tokenizer. The tokenizer truncates at the window, so those "
+            f"chunks would be embedded from a prefix and scored as though whole. "
+            f"Reduce the chunk budget, or use a model with a longer window."
         )
 
     def _embedder(self) -> Any:  # noqa: ANN401 - fastembed ships no stubs
