@@ -47,16 +47,33 @@ def test_text_and_spans_stay_in_step() -> None:
 def test_chunks_respect_the_token_budget() -> None:
     blocks = [block(i, text="wort " * 30) for i in range(20)]
     chunks = chunk_blocks("doc", blocks, target_tokens=120, overlap_tokens=0)
-    # A chunk may exceed the budget only when a single block already does.
-    assert all(chunk.token_count <= 120 or len(chunk.spans) == 1 for chunk in chunks)
+    assert all(chunk.token_count <= 120 for chunk in chunks)
 
 
-def test_an_oversized_block_becomes_its_own_chunk_rather_than_being_split() -> None:
-    """Splitting inside a block would produce text with no honest region."""
+def test_an_oversized_block_is_split_but_every_piece_keeps_the_whole_span() -> None:
+    """The citation stays truthful; only its tightness suffers.
+
+    Emitting one oversized chunk instead looked tidier and silently broke dense
+    retrieval, because embedding models truncate without complaint.
+    """
     blocks = [block(0, text="wort " * 500)]
     chunks = chunk_blocks("doc", blocks, target_tokens=100, overlap_tokens=0)
-    assert len(chunks) == 1
-    assert len(chunks[0].spans) == 1
+    assert len(chunks) > 1
+    assert all(chunk.spans == [blocks[0].span] for chunk in chunks)
+
+
+def test_no_chunk_exceeds_the_budget_even_from_one_huge_block() -> None:
+    """The property the dense retriever's window guard depends on."""
+    blocks = [block(0, text="wort " * 2000), block(1, text="wort " * 30)]
+    chunks = chunk_blocks("doc", blocks, target_tokens=100, overlap_tokens=0)
+    assert all(chunk.token_count <= 100 for chunk in chunks)
+
+
+def test_splitting_preserves_all_the_words() -> None:
+    blocks = [block(0, text=" ".join(f"w{i}" for i in range(300)))]
+    chunks = chunk_blocks("doc", blocks, target_tokens=100, overlap_tokens=0)
+    recovered = " ".join(chunk.text for chunk in chunks).split()
+    assert recovered == [f"w{i}" for i in range(300)]
 
 
 def test_overlap_repeats_whole_blocks() -> None:
@@ -111,3 +128,15 @@ def test_invalid_budgets_are_rejected(target: int, overlap: int) -> None:
 def test_token_estimate_grows_with_length() -> None:
     assert estimate_tokens("ein zwei drei") > estimate_tokens("ein")
     assert estimate_tokens("") == 0
+
+
+def test_overlap_never_pushes_a_chunk_over_the_budget() -> None:
+    """The carry is a nicety; the budget is not.
+
+    Without this, a carried overlap plus a full-size piece reached target plus
+    overlap, and 30 chunks slipped past a 110-token budget at 131 tokens.
+    """
+    blocks = [block(i, text="wort " * 68) for i in range(12)]
+    chunks = chunk_blocks("doc", blocks, target_tokens=110, overlap_tokens=20)
+    assert chunks
+    assert all(chunk.token_count <= 110 for chunk in chunks)

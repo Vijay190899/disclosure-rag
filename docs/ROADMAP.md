@@ -1,8 +1,8 @@
 # Roadmap
 
 **Shipped so far: M0 and M1, with M2 in progress.** The feasibility gate ran and cut one milestone
-from this list. The label plane is built and produces gold spans. The retrieval pipeline runs end
-to end, and its first run found two defects in the measurement rather than in itself.
+from this list. The label plane is built and produces gold spans. The retrieval pipeline runs end to
+end with an ablation ladder, and it has already overturned one of the project's founding decisions.
 
 This file replaces the checklist that used to sit in the README. A checklist reads as a completion
 meter, and a meter at zero says less about a project than a dated log of what actually landed.
@@ -56,8 +56,8 @@ drawn on it that I have looked at and confirmed are in the right places.
 
 ## M2. Ingest, retrieval and the first baseline (in progress)
 
-Built: PyMuPDF block parsing, span-preserving chunking, a BM25 baseline, question generation from
-the ledger, and coverage-based scoring. Ran end to end over 843 chunks and 120 questions.
+Built: PyMuPDF block parsing, span-preserving chunking, BM25, dense and hybrid retrieval, question
+generation from the ledger, coverage-based scoring, and paired bootstrap intervals on every delta.
 
 The run established, on real documents rather than fixtures, that a table row survives block
 extraction intact, that spans propagate through chunking so every gold fact is contained by some
@@ -68,15 +68,21 @@ Citation IoU was unreachable by construction, so scoring moved to containment. Q
 generated from English concept names against German documents, so they now use the German label the
 issuer declares in the taxonomy linkbase. [ADR-0009](adr/0009-m2-baseline-findings.md).
 
-**First baseline, BM25 over 843 chunks and 117 questions:**
+**Baseline, BM25 at 600-token chunks over 120 questions:**
 
 | Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found | tightness |
 |---|---|---|---|---|---|---|---|
-| exact figure | 117 | 0.231 | 0.462 | 0.538 | 0.231 | 0.429 | 0.025 |
+| exact figure | 120 | 0.208 | 0.375 | 0.508 | 0.208 | 0.410 | 0.044 |
 
-Remaining in M2: the ablation ladder. Dense retrieval as the next delta row, then hybrid fusion,
-then a reranker, each with a confidence interval. Also worth doing: load the official IFRS German
-labels so concepts are not skipped when an issuer bundles only its own extensions.
+The ablation ladder now runs: BM25, dense and hybrid, with paired bootstrap intervals on the delta,
+plus a chunk-size sweep. It overturned the hybrid retrieval decision from day one and found that the
+embedding model's context window constrains chunking hard enough to cost recall@1 two thirds. Results
+and caveats in [ADR-0010](adr/0010-ablation-ladder-results.md).
+
+Remaining in M2: a longer-context multilingual embedder, so the dense side is measured without the
+chunking constraint. Then a reranker as the next rung. Absolute quality is poor and the likely causes
+are table rows fragmenting across chunks and the naive tokenizer against German compounds, which is
+risk R3 and still open.
 
 Done when: every component in the stack has a delta row showing what it bought.
 

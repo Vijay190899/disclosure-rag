@@ -164,3 +164,30 @@ def test_strata_are_scored_separately() -> None:
 def test_empty_strata_are_omitted_rather_than_reported_as_zero() -> None:
     scores = score_run([question()], {})
     assert {s.stratum for s in scores} == {Stratum.EXACT_FIGURE}
+
+
+def test_every_tagged_occurrence_of_a_figure_is_gold() -> None:
+    """A figure reported twice has two correct locations, not one.
+
+    Filings often state a number in a highlights table and again in the full
+    statement, tagging each. Keeping only the first made dense retrieval look
+    broken when it returned the other legitimate occurrence.
+    """
+    elsewhere = Span(page=49, x0=0.6, y0=0.1, x1=0.7, y1=0.12)
+    fact = Fact(
+        fact_id="f1",
+        concept="ifrs-full:Assets",
+        displayed="5.996,4",
+        value=Decimal("5996400000"),
+        period="instant:2022-12-31",
+    )
+    twin = fact.model_copy(update={"fact_id": "f2"})
+    ledger = FactLedger(
+        document_id="doc",
+        facts=[LocatedFact(fact=fact, span=GOLD), LocatedFact(fact=twin, span=elsewhere)],
+        concept_labels={"ifrs-full:Assets": "Bilanzsumme"},
+    )
+
+    questions = questions_from_ledger(ledger)
+    assert len(questions) == 1, "one question per concept and period"
+    assert set(questions[0].gold_spans) == {GOLD, elsewhere}

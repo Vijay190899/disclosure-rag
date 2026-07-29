@@ -34,9 +34,25 @@ WORD = re.compile(r"\S+")
 TOKENS_PER_WORD = 1.6
 
 
+def count_words(text: str) -> int:
+    return len(WORD.findall(text))
+
+
 def estimate_tokens(text: str) -> int:
     """Approximate token count. Consistent, not exact. See the note above."""
-    return int(len(WORD.findall(text)) * TOKENS_PER_WORD)
+    return tokens_from_words(count_words(text))
+
+
+def tokens_from_words(words: int) -> int:
+    """The single conversion used everywhere, including the packing budget.
+
+    Budgeting has to use this rather than summing per-block estimates. Each
+    per-block ``int()`` discards up to a token, so a running sum over many small
+    blocks underestimates the joined total and the chunk quietly overshoots. That
+    is how one chunk reached 131 tokens against a 110 budget and tripped the
+    embedding window guard.
+    """
+    return int(words * TOKENS_PER_WORD)
 
 
 class Chunk(BaseModel):
@@ -82,8 +98,13 @@ def chunk_blocks(
     is exactly the kind of quiet approximation that makes a citation metric
     meaningless.
 
-    A single block larger than the target becomes its own chunk rather than
-    being split, because splitting it would mean cutting inside a region.
+    A block larger than the target on its own is split, and every piece keeps
+    the **whole block's span**. That is the honest handling: the text genuinely
+    does sit inside that region, so the citation is correct, merely wider than
+    it needs to be. The cost lands on tightness rather than on truth, which is
+    the right place for it. The alternative, emitting a single oversized chunk,
+    looked tidier and turned out to break dense retrieval silently, because
+    embedding models truncate without complaint.
     """
     if target_tokens <= 0:
         raise ValueError("target_tokens must be positive")
@@ -91,9 +112,14 @@ def chunk_blocks(
         raise ValueError("overlap_tokens must be non-negative and below target_tokens")
 
     ordered = sorted(blocks, key=lambda block: block.order)
+    # Budgets are held in words, because that is what the token estimate is
+    # derived from. See tokens_from_words.
+    word_budget = max(1, int(target_tokens / TOKENS_PER_WORD))
+    overlap_budget = int(overlap_tokens / TOKENS_PER_WORD)
+
     chunks: list[Chunk] = []
     current: list[Block] = []
-    current_tokens = 0
+    current_words = 0
 
     def emit(group: list[Block]) -> None:
         text = "\n".join(block.text for block in group)
@@ -112,22 +138,40 @@ def chunk_blocks(
     def carry_over(group: list[Block]) -> tuple[list[Block], int]:
         """Whole trailing blocks that fit inside the overlap budget."""
         carried: list[Block] = []
-        carried_tokens = 0
+        carried_words = 0
         for block in reversed(group):
-            block_tokens = estimate_tokens(block.text)
-            if carried_tokens + block_tokens > overlap_tokens:
+            words = count_words(block.text)
+            if carried_words + words > overlap_budget:
                 break
             carried.insert(0, block)
-            carried_tokens += block_tokens
-        return carried, carried_tokens
+            carried_words += words
+        return carried, carried_words
+
+    def split_oversized(block: Block) -> list[Block]:
+        """Break one long block into pieces, each keeping the full block span."""
+        words = WORD.findall(block.text)
+        return [
+            Block(
+                text=" ".join(words[start : start + word_budget]),
+                span=block.span,
+                order=block.order,
+            )
+            for start in range(0, len(words), word_budget)
+        ]
 
     for block in ordered:
-        block_tokens = estimate_tokens(block.text)
-        if current and current_tokens + block_tokens > target_tokens:
-            emit(current)
-            current, current_tokens = carry_over(current)
-        current.append(block)
-        current_tokens += block_tokens
+        pieces = split_oversized(block) if count_words(block.text) > word_budget else [block]
+        for piece in pieces:
+            piece_words = count_words(piece.text)
+            if current and current_words + piece_words > word_budget:
+                emit(current)
+                current, current_words = carry_over(current)
+                # The carry is a nicety; the budget is not. If overlap would push
+                # the next chunk over, drop the overlap rather than the ceiling.
+                if current_words + piece_words > word_budget:
+                    current, current_words = [], 0
+            current.append(piece)
+            current_words += piece_words
 
     if current:
         emit(current)

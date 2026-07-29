@@ -32,6 +32,11 @@ dev = [
 labels = [
     "playwright>=1.48",     # headless Chromium, print-to-PDF for the label plane only
 ]
+# Dense retrieval. fastembed runs ONNX rather than torch, which keeps the install
+# small enough that the evaluation stays reproducible on an ordinary machine.
+dense = [
+    "fastembed>=0.4",
+]
 # Throwaway probe dependencies. See spikes/esef_probe/README.md.
 spike = [
     "playwright>=1.48",
@@ -70,7 +75,7 @@ exclude = ["^spikes/"]
 
 [[tool.mypy.overrides]]
 # Optional label-plane tools, imported lazily and absent from the base install.
-module = ["qdrant_client.*", "fitz.*", "playwright.*"]
+module = ["qdrant_client.*", "fitz.*", "playwright.*", "fastembed.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -43,6 +43,10 @@ class Question(BaseModel):
     gold_spans: list[Span] = Field(default_factory=list)
     gold_value: str = ""
     source_fact_id: str = ""
+    label_source: str = Field(
+        default="own",
+        description="'own' if the label came from this filing's linkbase, 'pooled' if another's",
+    )
 
 
 def humanise_concept(concept: str) -> str:
@@ -68,8 +72,25 @@ def describe_period(period: str) -> str:
     return ""
 
 
-def questions_from_ledger(ledger: FactLedger, limit_per_document: int = 40) -> list[Question]:
+def questions_from_ledger(
+    ledger: FactLedger,
+    limit_per_document: int = 40,
+    pooled_labels: dict[str, str] | None = None,
+) -> list[Question]:
     """Generate the exact-figure stratum, and the narrative stratum if available.
+
+    ``pooled_labels`` supplies labels declared by *other* filings in the corpus,
+    used when this filing does not declare one itself. Issuers must label their
+    own extension concepts but standard IFRS labels come from the official
+    taxonomy, which packages reference rather than bundle, so coverage varies
+    from 92 of 92 concepts to 19 of 94 across three filings. Pooling lifts the
+    worst case to 58 of 94.
+
+    A pooled label is another issuer's wording for the same concept, so it will
+    often not match the target document's phrasing. That is a feature: it
+    creates the vocabulary mismatch a real user query has, and it is where dense
+    retrieval should beat lexical matching. Questions record which source they
+    came from so the two can be reported separately rather than confounded.
 
     The narrative stratum is drawn only from prose pairs marked ``confirmed``.
     Unconfirmed pairs are candidates, and roughly half of them are wrong, so
@@ -78,6 +99,21 @@ def questions_from_ledger(ledger: FactLedger, limit_per_document: int = 40) -> l
     quietly reporting a pooled number.
     """
     questions: list[Question] = []
+
+    # Every location a given concept and period is tagged at. A figure is often
+    # reported more than once, for example in a highlights table and again in the
+    # full statement, and each occurrence is separately tagged. All of them are
+    # correct answers to the same question, so all of them are gold.
+    #
+    # Getting this wrong was expensive to diagnose. Keeping only the first span
+    # made dense retrieval look broken: it was returning the consolidated
+    # statement on page 49 while the gold recorded page 25, and being scored zero
+    # for finding a legitimate occurrence of exactly the right figure.
+    locations: dict[tuple[str, str], list[Span]] = {}
+    for row in ledger.facts:
+        if not row.fact.concept:
+            continue
+        locations.setdefault((row.fact.concept, row.fact.period), []).append(row.span)
 
     # Exact figure: one question per distinct concept and period.
     seen: set[tuple[str, str]] = set()
@@ -94,6 +130,10 @@ def questions_from_ledger(ledger: FactLedger, limit_per_document: int = 40) -> l
         # than asked about in English, because that question is unanswerable by
         # construction and would depress the score for no reason. ADR-0009.
         subject = ledger.concept_labels.get(fact.concept)
+        label_source = "own"
+        if not subject and pooled_labels:
+            subject = pooled_labels.get(fact.concept)
+            label_source = "pooled"
         if not subject:
             continue
 
@@ -106,9 +146,10 @@ def questions_from_ledger(ledger: FactLedger, limit_per_document: int = 40) -> l
                 document_id=ledger.document_id,
                 text=text,
                 stratum=Stratum.EXACT_FIGURE,
-                gold_spans=[row.span],
+                gold_spans=locations[key],
                 gold_value=str(fact.value),
                 source_fact_id=fact.fact_id,
+                label_source=label_source,
             )
         )
         if len(questions) >= limit_per_document:

@@ -159,34 +159,63 @@ German-language, still ESEF.
 
 Roughly a week of work avoided, for an afternoon of measurement. That is what the gate was for.
 
-### First baseline
+### Results
 
-BM25 over 843 chunks, 117 questions, three Austrian filings. Deterministic, no model, no server, so
-the whole run takes seconds and anyone can reproduce it.
+120 questions over three Austrian filings, retrieval scoped to the filing each question asks about,
+gold covering every tagged occurrence of the figure. BM25 needs no model and no server, so a full
+run takes seconds and anyone can reproduce it.
 
-| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found | tightness |
-|---|---|---|---|---|---|---|---|
-| exact figure | 117 | 0.231 | 0.462 | 0.538 | 0.231 | **0.429** | 0.025 |
+**Chunk size** (BM25, same questions throughout):
 
-**The bolded number is the point of the project.** When the answer is retrieved at all, it is shown
-first only 43% of the time. So on more than half the questions where this system *had* the right
-passage, the region it would put in front of a reader is the wrong one. Answer-level scoring cannot
-see that, and it is exactly the failure a person doing verification would care about.
+| chunk tokens | chunks | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found |
+|---|---|---|---|---|---|---|
+| 110 | 5019 | 0.075 | 0.233 | 0.408 | 0.075 | 0.184 |
+| 300 | 1706 | 0.108 | **0.408** | **0.533** | 0.108 | 0.203 |
+| 600 | 799 | **0.208** | 0.375 | 0.508 | **0.208** | **0.410** |
 
-Tightness of 0.025 says a citation is currently about forty times larger than the number it is
-pointing at, because citations are block-level. That is the headroom, and it is what claim-level
-attribution in M5 is for.
+**The headline is that last cell.** At the best setting, when the answer is retrieved at all it is
+ranked first only 41% of the time. On the other 59% the system holds the right passage and would put
+a different region in front of the reader. Answer-level scoring cannot see that, and it is the
+failure a person doing verification would care about most. It is worse than I expected.
 
-This is the easy control stratum, not the headline. Questions name a concept and a period, and the
-answer sits in a table row. It is the number to beat, not the number to be proud of.
+Why 110 tokens was tried at all is the other finding: it is the largest budget that fits the
+embedding model's 128-token window. Shrinking chunks to fit the model cost recall@1 nearly two
+thirds. So the embedding context window is not a property of the dense component, it propagates back
+into chunking and degrades lexical retrieval too. The fix is a longer-context embedder, not smaller
+chunks.
 
-Getting here took two corrections, both in the measurement rather than the pipeline, both written up
-in [ADR-0009](docs/adr/0009-m2-baseline-findings.md). Citation IoU was unreachable by construction,
-since a tagged number covers 0.00026 of a page and the block citing it covers 0.0175, so a perfect
-citation scored about 0.015 and the threshold was measuring the size difference rather than the
-citation. Scoring moved to containment. Then the run still returned 0.000, because questions were
-generated from English concept names while the documents are German. They are now built from the
-German label the issuer declares in the taxonomy linkbase.
+**The ablation ladder**, and the decision it overturned:
+
+| Retriever | recall@5 | | recall@5, own label (n=86) | recall@5, pooled label (n=34) |
+|---|---|---|---|---|
+| bm25 | **0.233** | | **0.314** | 0.029 |
+| dense (multilingual MiniLM) | 0.042 | | 0.035 | 0.059 |
+| hybrid (reciprocal rank fusion) | 0.183 | | 0.221 | **0.088** |
+
+Paired bootstrap 95% interval on recall@5: bm25 to dense **-0.192 [-0.275, -0.117]**, dense to
+hybrid **+0.142 [+0.075, +0.217]**.
+
+**Hybrid retrieval loses to plain BM25**, so the decision I recorded on day one and was most
+confident about does not survive its first measurement. The split shows why. Where a question uses
+the document's own wording there is no vocabulary gap, lexical matching wins outright, and adding
+embeddings only dilutes the ranking. Where the wording differs, lexical collapses to 0.029 and
+hybrid triples it. The original reasoning was right about the mechanism and wrong about the
+conclusion, so BM25 is now the default and hybrid is a configurable path with a stated condition.
+Full reasoning and caveats in [ADR-0010](docs/adr/0010-ablation-ladder-results.md).
+
+**These are not good numbers.** This is the easy control stratum, where the question names a concept
+and a period and the answer sits in a table row, and finding it in the top ten half the time is
+poor. Reported anyway, because a baseline is for beating and because the citation gap is already
+visible in it. Likely causes, in the order I would test them: table rows fragmenting across chunks,
+the naive tokenizer against German compounds, and no reranker yet.
+
+Getting here took six corrections, all in the measurement rather than the pipeline, each now covered
+by a regression test. They are written up in
+[ADR-0009](docs/adr/0009-m2-baseline-findings.md) and
+[ADR-0010](docs/adr/0010-ablation-ladder-results.md): a metric that was unreachable by construction,
+questions asked in the wrong language, embeddings silently truncated to a fifth of each chunk, a
+chunk budget that leaked twice, retrieval that was not scoped to the document being asked about, and
+gold that recorded one location for figures reported in several.
 
 ## Targets
 

@@ -38,6 +38,21 @@ class Retriever(Protocol):
         """Build or rebuild the index. Replaces any previous contents."""
         ...
 
-    def search(self, query: str, top_k: int = 10) -> list[ScoredChunk]:
-        """Return the top ranked chunks, best first."""
+    def search(
+        self, query: str, top_k: int = 10, document_id: str | None = None
+    ) -> list[ScoredChunk]:
+        """Return the top ranked chunks, best first.
+
+        ``document_id`` restricts results to one document. This is not an
+        optimisation, it is required for correctness: a question is asked about a
+        specific filing, so a passage from a different one is wrong however well
+        it matches.
+
+        It matters more than it sounds. This corpus is three Austrian bank annual
+        reports whose wording is nearly identical, and unscoped dense retrieval
+        returned only 4 of its top 10 from the document being asked about. The
+        other six were the same income statement row in the wrong bank's report.
+        Lexical retrieval degrades less, because exact figures differ between
+        filings and give it some accidental document specificity.
+        """
         ...

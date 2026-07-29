@@ -79,7 +79,9 @@ class BM25Retriever:
         # appearing in most documents.
         return math.log(1 + (total - seen + 0.5) / (seen + 0.5))
 
-    def search(self, query: str, top_k: int = 10) -> list[ScoredChunk]:
+    def search(
+        self, query: str, top_k: int = 10, document_id: str | None = None
+    ) -> list[ScoredChunk]:
         if not self._chunks:
             return []
 
@@ -87,6 +89,8 @@ class BM25Retriever:
         scored: list[tuple[float, int]] = []
 
         for position, counts in enumerate(self._term_frequencies):
+            if document_id is not None and self._chunks[position].document_id != document_id:
+                continue
             length = self._lengths[position]
             score = 0.0
             for term in query_terms:

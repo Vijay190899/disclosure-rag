@@ -84,3 +84,31 @@ def test_a_result_exposes_the_spans_it_would_cite() -> None:
     retriever = BM25Retriever()
     retriever.index([chunk("c0", "eigenkapital", page=7)])
     assert retriever.search("eigenkapital")[0].spans[0].page == 7
+
+
+def test_search_can_be_scoped_to_one_document() -> None:
+    """A passage from another filing is wrong however well it matches."""
+    retriever = BM25Retriever()
+    a = Chunk(
+        chunk_id="a0",
+        document_id="doc-a",
+        text="eigenkapital der gruppe",
+        spans=[Span(page=0, x0=0.1, y0=0.1, x1=0.9, y1=0.2)],
+        order=0,
+    )
+    b = Chunk(
+        chunk_id="b0",
+        document_id="doc-b",
+        text="eigenkapital der gruppe",
+        spans=[Span(page=0, x0=0.1, y0=0.1, x1=0.9, y1=0.2)],
+        order=0,
+    )
+    retriever.index([a, b])
+    hits = retriever.search("eigenkapital", document_id="doc-b")
+    assert [hit.chunk.chunk_id for hit in hits] == ["b0"]
+
+
+def test_an_unknown_document_scope_returns_nothing() -> None:
+    retriever = BM25Retriever()
+    retriever.index([chunk("c0", "eigenkapital")])
+    assert retriever.search("eigenkapital", document_id="absent") == []

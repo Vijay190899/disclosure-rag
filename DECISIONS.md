@@ -9,6 +9,8 @@ purpose.
 
 | Date | Decision | Record |
 |---|---|---|
+| 2026-07-29 | BM25 is the default retriever. Hybrid loses to it overall and is kept only for queries not using the document's own wording | [ADR-0010](docs/adr/0010-ablation-ladder-results.md) |
+| 2026-07-29 | Chunk size must not be dictated by the embedding window. Shrinking chunks to 110 tokens to fit a 128-token model cost recall@1 two thirds | [ADR-0010](docs/adr/0010-ablation-ladder-results.md) |
 | 2026-07-29 | M0 probe run. Reconciliation cut at 19 of 50; region-level citations confirmed at 865 of 865, median IoU 0.947 | [ADR-0007](docs/adr/0007-m0-probe-outcome.md) |
 | 2026-07-29 | Locate facts through PDF link annotations, not browser geometry. The browser method located 0 of 600 | [ADR-0007](docs/adr/0007-m0-probe-outcome.md) |
 | 2026-07-29 | Corpus moves to Austrian filings. The open index carries no German ones, since the Unternehmensregister does not publish into it | [ADR-0007](docs/adr/0007-m0-probe-outcome.md), amending [ADR-0003](docs/adr/0003-esef-corpus-and-labels.md) |
@@ -17,7 +19,7 @@ purpose.
 | 2026-07-29 | Provenance is a list of spans carried end to end. Chunking runs over the block list, never over concatenated text | [ADR-0004](docs/adr/0004-provenance-contract.md) |
 | 2026-07-29 | Real ESEF filings as the corpus, with Inline XBRL as a mechanical source of numeric and positional labels | [ADR-0003](docs/adr/0003-esef-corpus-and-labels.md) |
 | 2026-07-29 | PyMuPDF for parsing. Docling is the named upgrade path if table structure becomes the binding constraint | [ADR-0002](docs/adr/0002-pymupdf-for-parsing.md) |
-| 2026-07-07 | Hybrid retrieval over dense-only. Financial documents are full of exact figures and codes that embeddings miss | Still holds, but reclassified as a hypothesis until it has a delta row. See [ADR-0006](docs/adr/0006-deterministic-evaluation-gate.md) |
+| 2026-07-07 | ~~Hybrid retrieval over dense-only. Financial documents are full of exact figures and codes that embeddings miss~~ | Tested and largely overturned 2026-07-29. Right about the mechanism, wrong about the conclusion: because exact figures favour lexical matching, fusing a weaker dense retriever in costs ranking positions. See [ADR-0010](docs/adr/0010-ablation-ladder-results.md) |
 | 2026-07-07 | ~~OpenAI Agents SDK for the answer loop, retrieval exposed via MCP~~ | Superseded 2026-07-29 by [ADR-0005](docs/adr/0005-no-agent-framework.md) |
 | 2026-07-07 | Adopt lightweight ADRs | [ADR-0001](docs/adr/0001-record-architecture-decisions.md) |
 
