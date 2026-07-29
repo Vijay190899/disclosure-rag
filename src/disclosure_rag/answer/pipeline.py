@@ -45,7 +45,7 @@ class AnswerPipeline:
         ledgers: dict[str, FactLedger],
         retriever: Retriever,
         generator: Generator | None = None,
-        abstain_below: float = 0.5,
+        abstain_below: float = 0.8,
     ) -> None:
         self.ledgers = ledgers
         self.retriever = retriever

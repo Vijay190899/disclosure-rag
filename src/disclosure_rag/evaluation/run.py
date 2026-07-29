@@ -17,7 +17,16 @@ import argparse
 import json
 from pathlib import Path
 
+from disclosure_rag.answer.pipeline import AnswerPipeline
 from disclosure_rag.citation import select_numeric_spans
+from disclosure_rag.corpus import load_corpus
+from disclosure_rag.evaluation.benchmark import (
+    Benchmark,
+    build_cases,
+    render_report,
+    render_risk_coverage,
+    risk_coverage,
+)
 from disclosure_rag.evaluation.metrics import (
     COVERAGE_THRESHOLD,
     Result,
@@ -124,16 +133,14 @@ def per_question_hits(questions: list[Question], results: dict[str, Result], k: 
 def render_scores(name: str, scores: list[StratumScore]) -> str:
     lines = [
         f"\n{name}",
-        "| Stratum | n | recall@1 | recall@5 | recall@10 | citation IoU@0.5 "
-        "| IoU given rank-1 (n) |",
-        "|---|---|---|---|---|---|---|",
+        "| Stratum | n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | Citation IoU@0.5 |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for score in scores:
         lines.append(
             f"| {score.stratum.value} | {score.questions} | "
             f"{score.recall_at_1:.3f} | {score.recall_at_5:.3f} | {score.recall_at_10:.3f} | "
-            f"{score.citation_iou_at_50:.3f} | "
-            f"{score.citation_iou_given_rank_1:.3f} ({score.questions_at_rank_1}) |"
+            f"{score.mrr_at_10:.3f} | {score.ndcg_at_10:.3f} | {score.citation_iou_at_50:.3f} |"
         )
     return "\n".join(lines)
 
@@ -219,9 +226,24 @@ def main() -> int:
             print(f"    n={delta.n}, questions where the two disagree={delta.discordant}")
 
     print(
-        "\n[eval] strata are reported separately and never pooled. exact_figure is "
-        "the easy control, not the headline. See ADR-0008."
+        "\n[eval] retrieval strata are reported separately and never pooled. "
+        "exact_figure is the easy control, not the headline."
     )
+
+    # End to end: routing, answers and abstention through the real pipeline, on
+    # the same corpus at the same settings the service loads.
+    corpus = load_corpus(args.ledgers, args.chunk_tokens, args.overlap_tokens)
+    pipeline = AnswerPipeline(corpus.ledgers, corpus.retriever)
+    cases = build_cases(corpus.ledgers)
+    end_to_end = Benchmark(pipeline).run(cases)
+    print(render_report(end_to_end))
+    report["end_to_end"] = end_to_end.model_dump(mode="json")
+
+    curve = risk_coverage(pipeline, cases, (0.3, 0.5, 0.7, 0.8, 0.9))
+    print(render_risk_coverage(curve))
+    report["risk_coverage"] = [
+        {"threshold": t, "exact_match": c, "false_answer_rate": e} for t, c, e in curve
+    ]
 
     if args.out:
         report["runs"] = [

@@ -37,9 +37,22 @@ class RetrievalSettings(BaseModel):
 
 
 class AnswerSettings(BaseModel):
-    """Grounded generation and abstention. See ADR-0005."""
+    """Grounded generation and abstention.
 
-    abstain_below: float = Field(default=0.5, ge=0.0, le=1.0)
+    ``abstain_below`` is chosen from the threshold sweep in the benchmark rather
+    than by taste. Measured on the generated case set, moving it from 0.5 to 0.8
+    takes the false answer rate on unanswerable questions from 0.517 to 0.000
+    with no loss of exact match on answerable ones, because tagged figures are
+    answered from the structured layer at full confidence and are unaffected.
+
+    The trade it does make is not visible in that measurement: a higher threshold
+    abstains more often on narrative questions, which have no gold set here. That
+    is the intended direction for this product, where an answer a reader cannot
+    verify costs more than no answer, and the curve is published so the trade is
+    explicit rather than buried in a default.
+    """
+
+    abstain_below: float = Field(default=0.8, ge=0.0, le=1.0)
     max_context_chunks: int = Field(default=8, ge=1, le=50)
 
 

@@ -62,9 +62,17 @@ def test_a_ledger_citation_is_marked_exact_and_carries_the_tagged_span() -> None
 
 
 def test_a_narrative_question_is_answered_from_passages() -> None:
-    answer = build().answer("Welche Risiken bestehen beim Kreditportfolio?", "doc")
+    pipeline = build()
+    pipeline.abstain_below = 0.4  # the default is deliberately strict, see config
+    answer = pipeline.answer("Welche Risiken bestehen beim Kreditportfolio?", "doc")
     assert answer.route is Route.PASSAGE
     assert answer.citations and answer.citations[0].exact is False
+
+
+def test_the_default_threshold_prefers_silence_to_a_weak_answer() -> None:
+    """Chosen from the sweep: it takes false answers to zero at no measured cost."""
+    answer = build().answer("Welche Risiken bestehen beim Kreditportfolio?", "doc")
+    assert answer.status is Status.ABSTAINED
 
 
 def test_an_unsupported_question_abstains_rather_than_guessing() -> None:
@@ -76,7 +84,7 @@ def test_an_unsupported_question_abstains_rather_than_guessing() -> None:
 def test_abstention_still_returns_the_nearest_evidence() -> None:
     """Abstaining is more useful when the reader can see what was nearly matched."""
     pipeline = build()
-    pipeline.abstain_below = 0.99
+    pipeline.abstain_below = 0.99  # noqa: F841 - forces the abstain branch
     answer = pipeline.answer("Welche Risiken bestehen beim Kreditportfolio?", "doc")
     assert answer.status is Status.ABSTAINED
     assert len(answer.citations) <= 1

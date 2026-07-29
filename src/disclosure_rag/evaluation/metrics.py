@@ -42,6 +42,8 @@ they can gate CI without a model call. ADR-0006.
 
 from __future__ import annotations
 
+import math
+
 from pydantic import BaseModel, Field
 
 from disclosure_rag.evaluation.questions import Question, Stratum
@@ -123,6 +125,8 @@ class StratumScore(BaseModel):
     recall_at_1: float = 0.0
     recall_at_5: float = 0.0
     recall_at_10: float = 0.0
+    mrr_at_10: float = Field(default=0.0, description="Mean reciprocal rank of the first hit")
+    ndcg_at_10: float = Field(default=0.0, description="Binary-relevance nDCG")
     citation_coverage_at_1: float = Field(
         default=0.0,
         description="Share of questions whose top result contains the gold region",
@@ -157,6 +161,40 @@ def _recall_at(paired: list[tuple[Result, list[Span]]], k: int) -> float:
         1 for result, gold in paired if (rank := result.hit_rank(gold)) is not None and rank <= k
     )
     return hits / len(paired)
+
+
+def _mrr_at(paired: list[tuple[Result, list[Span]]], k: int = 10) -> float:
+    """Mean reciprocal rank. Rewards putting the answer high, not merely finding it."""
+    if not paired:
+        return 0.0
+    total = 0.0
+    for result, gold in paired:
+        rank = result.hit_rank(gold)
+        if rank is not None and rank <= k:
+            total += 1.0 / rank
+    return total / len(paired)
+
+
+def _ndcg_at(paired: list[tuple[Result, list[Span]]], k: int = 10) -> float:
+    """Normalised discounted cumulative gain with binary relevance.
+
+    A chunk is relevant if its region contains a gold span. Several chunks can be
+    relevant when a figure is reported more than once, so the ideal ranking puts
+    all of them first and the denominator accounts for that.
+    """
+    if not paired:
+        return 0.0
+    total = 0.0
+    for result, gold in paired:
+        relevances = [
+            1.0 if best_coverage(gold, spans) >= COVERAGE_THRESHOLD else 0.0
+            for spans in result.retrieved_spans[:k]
+        ]
+        gain = sum(rel / math.log2(rank + 1) for rank, rel in enumerate(relevances, start=1))
+        relevant = int(sum(relevances))
+        ideal = sum(1.0 / math.log2(rank + 1) for rank in range(1, max(relevant, 1) + 1))
+        total += gain / ideal if ideal else 0.0
+    return total / len(paired)
 
 
 def score_run(questions: list[Question], results: dict[str, Result]) -> list[StratumScore]:
@@ -204,6 +242,8 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
                 recall_at_1=at_1,
                 recall_at_5=_recall_at(paired, 5),
                 recall_at_10=at_10,
+                mrr_at_10=_mrr_at(paired, 10),
+                ndcg_at_10=_ndcg_at(paired, 10),
                 shown_first_when_found=at_1 / at_10 if at_10 else 0.0,
                 citation_coverage_at_1=sum(1 for value in coverages if value >= COVERAGE_THRESHOLD)
                 / len(coverages),
