@@ -9,10 +9,10 @@
 
 | | |
 |---|---|
-| **Status** | Design, pre-implementation. Nothing in section 5 or later is built yet. |
+| **Status** | Design. M0 feasibility measured; nothing in section 5 or later is built yet. |
 | **Owner** | Vijay Ananth Karunanithi |
 | **Last updated** | 2026-07-29 |
-| **Version** | 0.2.0 |
+| **Version** | 0.3.0 |
 
 ---
 
@@ -159,35 +159,45 @@ sequenceDiagram
     participant F as Filing store
     participant A as Arelle
     participant B as Chromium
+    participant P as PyMuPDF
     participant L as Fact ledger
 
     F->>A: report.xhtml
     A-->>L: facts: concept, value, unit,<br/>scale, sign, contextRef
     Note over A,L: contextRef resolves the period and entity.<br/>Ignoring it scores prior-year figures as current.
 
-    F->>B: report.xhtml
-    B->>B: render at fixed viewport and DPI
-    loop for each ix: element
-        B->>B: getBoundingClientRect()
+    A->>F: stamped copy, each fact<br/>wrapped in an anchor
+    F->>B: report.stamped.xhtml
+    B->>B: print to PDF
+    Note over B: anchors survive as link annotations,<br/>emitted by the same pagination pass<br/>that produces the pages
+    B-->>P: report.pdf
+    loop for each link annotation
+        P->>P: read page number and rect
     end
-    B-->>L: element id, page index, bbox
-    B-->>F: report.pdf (print to PDF, same geometry)
+    P-->>L: probe id, page, bbox
 
-    Note over L: join on element id<br/>one row per tagged fact,<br/>fully located
+    Note over L: one row per tagged fact,<br/>fully located
 ```
 
-Two details that decide whether this works:
+Three details that decide whether this works:
 
-- **The rendered PDF and the geometry must come from the same rendering pass.** If the boxes are
-  read from a browser viewport and the serving plane parses a PDF produced some other way, the
-  coordinate systems diverge and every measurement is wrong. One pass, one coordinate space,
-  normalised to the page box.
-- **The PDF handed to the serving plane carries no tags.** It is the same artefact a human reviewer
-  would open. That is what makes the comparison fair.
+- **Location comes from the printed artefact, not from the browser viewport.** This is the
+  correction the M0 probe forced. Reading `getBoundingClientRect()` and deriving a page index
+  arithmetically located 0 of 600 facts, because screen layout and print layout are different
+  layouts and Chromium repaginates when printing. Link annotations are produced by the pagination
+  pass itself, so they cannot disagree with it. Measured at 865 of 865, median IoU 0.947.
+  See [ADR-0007](adr/0007-m0-probe-outcome.md).
+- **The anchors must not change the layout being measured.** They carry a stylesheet override that
+  neutralises colour, underline and background, so wrapping a number cannot shift it.
+- **The PDF handed to the serving plane is rendered from the unstamped original.** It carries no
+  tags and no anchors: the same artefact a human reviewer would open. That is what makes the
+  comparison fair.
 
 The output is a `FactLedger`: one row per tagged fact, carrying both what the number means and
-where it sits. It serves three purposes: gold labels for citation accuracy, the oracle for
-reconciliation, and a structured store the query router can answer numeric questions from directly.
+where it sits. It serves two purposes: gold labels for citation accuracy, and a structured store the
+query router can answer numeric questions from directly. A third purpose, acting as an oracle for
+checking figures restated in prose, was designed and then cut when M0 measured how few prose figures
+resolve. See [ADR-0007](adr/0007-m0-probe-outcome.md).
 
 ## 6. Data model and provenance contract
 
@@ -274,7 +284,7 @@ invalidating the index.
     }
   ],
   "support": { "claims_total": 2, "claims_supported": 2 },
-  "route": "narrative"                // narrative | ledger | reconciliation
+  "route": "narrative"                // narrative | ledger
 }
 ```
 
@@ -301,18 +311,12 @@ exact answer in the ledger, and retrieving it approximately would be a downgrade
 flowchart TD
     Q["Question"] --> C{"Classify"}
     C -->|"names a tagged concept<br/>and a period"| L["Ledger lookup"]
-    C -->|"asserts a figure<br/>to be checked"| R["Reconciliation"]
     C -->|"otherwise"| N["Hybrid retrieval"]
 
     L --> LA["Exact value<br/>span from ledger"]
-    R --> R1["Retrieve narrative mention"]
-    R1 --> R2["Extract structured claim<br/>value · unit · scale · period"]
-    R2 --> R3["Resolve to ledger fact<br/>by concept and contextRef"]
-    R3 --> R4["Compare in Python<br/>with tolerance policy"]
     N --> NA["Generate with<br/>span attribution"]
 
     LA --> G{"Supported?"}
-    R4 --> G
     NA --> G
     G -->|yes| OUT["Answer with citations"]
     G -->|no| ABS["Abstain and return<br/>nearest evidence"]
@@ -323,13 +327,17 @@ flowchart TD
     class N,NA soft
 ```
 
-Step `R4` is principle **P3** made concrete. The model's only job in the reconciliation path is to
-turn a sentence into `{value, unit, scale, period}`. Scaling, sign handling and the tolerance
-comparison run in Python, where they are unit-testable and cannot hallucinate.
+The ledger branch is principle **P3** in its surviving form. Where a question names a tagged concept
+and a period, the answer is a lookup returning an exact value with a span, and no model is involved
+in producing the number.
 
-The tolerance policy is a product decision, not a prompt: a narrative figure is treated as agreeing
-with a tagged fact when it rounds to the same value at the precision the narrative itself uses.
-"Roughly 1.2 billion" agrees with 1,204,000,000. "1.3 billion" does not.
+**A third branch was designed and then cut.** It would have checked figures asserted in narrative
+prose against the ledger, with the model extracting `{value, unit, scale, period}` from a sentence
+and the comparison executed in Python under an explicit tolerance policy. The M0 probe measured how
+many prose figures actually resolve to a tagged fact and found 19 of 50 against a threshold of 20,
+so the labels the design depended on are not available at scale. See
+[ADR-0007](adr/0007-m0-probe-outcome.md). The design is recorded there rather than here, because
+this section describes what the system does.
 
 ## 9. Evaluation design
 
@@ -339,7 +347,6 @@ The system exists to produce these numbers. They are the deliverable, not a by-p
 |---|---|---|---|
 | recall@k, nDCG@10 | Did the right passage come back? | Ledger spans plus hand-labelled narrative | CI, deterministic |
 | **citation IoU@0.5** | **Does the citation point at the right region?** | Ledger bounding boxes | CI, deterministic |
-| Reconciliation precision / recall | Are narrative figures correctly agreed or flagged? | Ledger facts | CI, deterministic |
 | Abstention precision / recall | When it declines, was it right to? | Hand-labelled unanswerables | CI, deterministic |
 | Risk-coverage curve, AURC | Where should the abstention threshold sit? | Derived from the above | Reported, not gated |
 | Faithfulness, answer relevance | Is the prose grounded? | Model-judged | Nightly, off critical path |
@@ -421,16 +428,26 @@ identifiers and replay, which is M6 work.
 
 ## 14. Open questions and risks
 
+Closed by M0 on 2026-07-29:
+
+| | Risk | Outcome |
+|---|---|---|
+| ~~R1~~ | Narrative prose may not contain enough figures resolvable to tagged facts. | **Materialised.** 19 of 50 against a threshold of 20. Reconciliation cut. |
+| ~~R2~~ | Browser geometry may not map cleanly onto the printed PDF. | **Materialised, and solved.** Browser geometry located 0 of 600. PDF link annotations located 865 of 865 at median IoU 0.947, so region-level citations proceed. |
+
+Still open:
+
 | | Risk | Impact | How it gets resolved |
 |---|---|---|---|
-| **R1** | Narrative prose may not contain enough figures resolvable to tagged facts. | Removes the reconciliation capability and the free-label advantage. This is the main risk. | **M0 spike, with a documented abort threshold.** See [spikes/esef_probe](../spikes/esef_probe/README.md). |
-| **R2** | Browser geometry may not map cleanly onto the printed PDF. | Drops citations from region level to page level. | M0 measures it. If it fails, the README says page level and the IoU metric is dropped rather than fudged. |
-| **R3** | German compound nouns break naive lexical matching. | Weakens the sparse half of hybrid retrieval. | Decided with a measurement in M2, not by assertion. |
+| **R3** | German compound nouns break naive lexical matching. | Weakens the sparse half of hybrid retrieval, which is currently my most confident claim. | Decided with a measurement in M2, not by assertion. |
 | **R4** | Scope creep back toward the original stack. | The project does not finish. | The cut list in [ADR-0005](adr/0005-no-agent-framework.md) is explicit about what is never built. |
+| **R5** | Table structure, not text extraction, is the binding constraint on retrieval quality. | Forces a move from PyMuPDF to Docling mid-build. | M2 failure taxonomy. [ADR-0002](adr/0002-pymupdf-for-parsing.md) names the trigger. |
+| **R6** | The Austrian corpus is small enough that results do not generalise. | Weakens every number the project reports. | Widen to the Nordic and French indices, which the fetcher already takes as a parameter. |
 
 ## 15. Revision history
 
 | Date | Version | Change | Author |
 |---|---|---|---|
+| 2026-07-29 | 0.3.0 | M0 probe results applied. Fact location moved from browser geometry to PDF link annotations, after the first method located 0 of 600 facts. Reconciliation route and metric removed, since only 19 of 50 prose figures resolve. Corpus moved from German to Austrian filings, the open index carrying none from Germany. R1 and R2 closed, R5 and R6 opened. See [ADR-0007](adr/0007-m0-probe-outcome.md). | Vijay Ananth Karunanithi |
 | 2026-07-29 | 0.2.0 | Reframed around the two-plane architecture with an Inline XBRL oracle. Replaced the single-bbox citation model with multi-span provenance. Removed the agent framework, the MCP server, and the managed-model and Kubernetes paths. Added the M0 abort gate, the evaluation design with sample-size reasoning, and the failure taxonomy. Corrected the personal-data claim. | Vijay Ananth Karunanithi |
 | 2026-07-07 | 0.1.0 | Initial technical documentation (pre-implementation). | Vijay Ananth Karunanithi |

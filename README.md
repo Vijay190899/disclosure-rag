@@ -5,10 +5,12 @@ exact page and region it came from, and low-confidence answers abstain instead o
 citations are scored against bounding-box ground truth taken mechanically from Inline XBRL, so
 "the citation points at the right place" is a measured number rather than a promise.**
 
-> **Status: design complete, implementation not started.** The architecture, contracts and
-> evaluation plan are written. No pipeline code exists yet. Nothing below is described as working,
-> and the numbers in [Targets](#targets) are targets, not results. Progress in
-> [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status: design complete, feasibility measured, pipeline not started.** The M0 probe has run
+> against 865 tagged facts in real filings and settled two open questions: gold citation boxes can
+> be produced mechanically (865 of 865 located, median IoU 0.947), and numeric reconciliation
+> cannot be labelled for free (19 of 50 against a threshold of 20), so that feature is cut. The
+> numbers in [Measured so far](#measured-so-far) are real. Everything in
+> [Targets](#targets) is not yet built. Progress in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## The problem
 
@@ -50,9 +52,11 @@ So the value, unit, scale and period are declared, and because the tag is an ele
 document, a browser can tell me exactly where it sits on the page. That is gold-standard provenance
 obtained mechanically, at scale, with no hand annotation.
 
-The asymmetry is what makes it useful: only the primary statements are tagged. The management
-report and the narrative repeat the same figures in prose, untagged. **So the tagged statements are
-an oracle, and the untagged narrative is the system under test.**
+Only the primary statements are tagged this way, which is what makes the tags usable as an
+independent gold standard: the pipeline itself only ever sees the rendered PDF, never a tag.
+
+I also expected to use the tagged statements as an oracle for checking figures restated in the
+untagged narrative. [I measured that and it did not hold up](#measured-so-far), so it is cut.
 
 ## How it works
 
@@ -128,16 +132,42 @@ it would take to change my mind.
   figures and identifiers, so lexical matching should help. That is a hypothesis, and it stays
   labelled as one until there is a delta row showing it.
 
+## Measured so far
+
+The M0 probe ran against three Austrian ESEF filings, 865 tagged facts. Thresholds were written
+down before it ran. Full detail in [spikes/esef_probe/REPORT.md](spikes/esef_probe/REPORT.md) and
+the reasoning in [ADR-0007](docs/adr/0007-m0-probe-outcome.md).
+
+| Question | Threshold | Result | |
+|---|---|---|---|
+| Can gold citation boxes be produced mechanically? | 90% located | **865 of 865 (100%)**, median IoU **0.947** | pass |
+| Can numeric reconciliation be labelled for free? | 20 of 50 | **19 of 50** | fail |
+
+**What each result changed.** The first is the project's foundation and it holds: region-level
+citation accuracy is measurable at scale with no hand annotation, so citation IoU stays as the
+headline metric. The second is cut. Real cases exist, such as "Die Gesamtaktiva der Addiko Gruppe
+beliefen sich zum Jahresende 2022 auf EUR 5.996,4 Mio" resolving to `ifrs-full:Assets`, but not
+enough of them to build a benchmark without hand labelling, which was the whole argument for
+including it.
+
+Two things the probe also corrected. My first method for locating facts, reading element geometry
+in the browser, located **0 of 600**: screen layout and print layout are different layouts, and
+Chromium repaginates when printing. Reading PDF link annotations instead fixed it completely. And
+there are **no German filings** in the open index, because Germany's officially appointed mechanism
+is the Unternehmensregister and it does not publish into it, so the corpus is Austrian: still
+German-language, still ESEF.
+
+Roughly a week of work avoided, for an afternoon of measurement. That is what the gate was for.
+
 ## Targets
 
-No results yet. These are the numbers I am building toward, published now so that the bar is set
+Not built yet. These are the numbers I am building toward, published now so that the bar is set
 before I can be tempted to move it.
 
 | Metric | Target | Why this one |
 |---|---|---|
-| Citation IoU@0.5, top-1 | Establish a baseline | The point of the project. Measured against ledger boxes. |
+| Citation IoU@0.5, top-1 | Establish a baseline | The point of the project. Gold boxes confirmed available by M0. |
 | recall@5, exact-figure questions | Beat dense-only by a reported margin | Tests the hybrid retrieval claim directly |
-| Reconciliation precision | ≥ 0.90 | A false agreement is the worst failure this system can produce |
 | Abstention precision | Reported with a risk-coverage curve | The threshold should come from the curve, not from taste |
 | p95 latency | < 4 s | Usable interactively |
 
@@ -146,17 +176,21 @@ paired bootstrap confidence interval on the delta rather than two bare point est
 for the sample size is in
 [section 9 of the technical documentation](docs/TECHNICAL_DOCUMENTATION.md#9-evaluation-design).
 
-## What could sink this
+## What could still sink this
 
-The whole design assumes narrative prose contains enough figures that resolve to tagged facts. If
-most narrative numbers turn out to be derived or untagged, the reconciliation capability has no free
-labels and the idea is weaker than I think.
+The two assumptions I was most worried about have been measured, and one of them failed, which is
+why the scope is now smaller than it was this morning. What remains untested:
 
-So the first thing I build is not the pipeline. It is a five-hour probe that measures exactly that,
-with an abort threshold written down in advance: [spikes/esef_probe](spikes/esef_probe/). If fewer
-than 20 of 50 sampled narrative figures resolve, the reconciliation work is cut and the project
-falls back to disclosure location only. I would rather find that out in an afternoon than in week
-four.
+- **Chunking may not preserve enough context** for a retrieved passage to answer a question, even
+  with the geometry intact. Measured in M2 against the baseline.
+- **German compound nouns may break lexical retrieval**, which would undercut the hybrid retrieval
+  argument that is currently my most confident claim. Decided by the delta row, not by assertion.
+- **Table structure may be the binding constraint** rather than text extraction, which would mean
+  moving from PyMuPDF to Docling. [ADR-0002](docs/adr/0002-pymupdf-for-parsing.md) names that as
+  the upgrade path and the trigger.
+
+The pattern is the same each time: write the threshold down first, measure, and let the result
+decide rather than arguing with it.
 
 ## Running it locally
 
@@ -166,7 +200,9 @@ make check     # lint, typecheck, test
 make run       # health endpoint on http://localhost:8000/health
 ```
 
-Only `/health` is implemented. `make spike` runs the ESEF probe described above.
+Only `/health` is implemented. `make spike` reruns the M0 probe from scratch, which downloads real
+filings and a Chromium build, then rewrites
+[spikes/esef_probe/REPORT.md](spikes/esef_probe/REPORT.md).
 
 ## Licence
 

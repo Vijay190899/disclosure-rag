@@ -9,6 +9,9 @@ purpose.
 
 | Date | Decision | Record |
 |---|---|---|
+| 2026-07-29 | M0 probe run. Reconciliation cut at 19 of 50; region-level citations confirmed at 865 of 865, median IoU 0.947 | [ADR-0007](docs/adr/0007-m0-probe-outcome.md) |
+| 2026-07-29 | Locate facts through PDF link annotations, not browser geometry. The browser method located 0 of 600 | [ADR-0007](docs/adr/0007-m0-probe-outcome.md) |
+| 2026-07-29 | Corpus moves to Austrian filings. The open index carries no German ones, since the Unternehmensregister does not publish into it | [ADR-0007](docs/adr/0007-m0-probe-outcome.md), amending [ADR-0003](docs/adr/0003-esef-corpus-and-labels.md) |
 | 2026-07-29 | CI gates on deterministic metrics only; model-judged metrics run nightly and never block a build | [ADR-0006](docs/adr/0006-deterministic-evaluation-gate.md) |
 | 2026-07-29 | No agent framework and no MCP server. The answer loop is a fixed pipeline, so an agent adds nondeterminism to a project about verifiability | [ADR-0005](docs/adr/0005-no-agent-framework.md) |
 | 2026-07-29 | Provenance is a list of spans carried end to end. Chunking runs over the block list, never over concatenated text | [ADR-0004](docs/adr/0004-provenance-contract.md) |
@@ -37,6 +40,29 @@ question-answering system, which is the most common portfolio project there is. 
 worth building is narrower: a retrieval system can produce a correct answer while citing the wrong
 place, standard evaluation cannot see it, and Inline XBRL makes it measurable without hand
 annotation. Everything else in the design now follows from that.
+
+## What the M0 probe changed, later the same day
+
+Three of the decisions above were made in the morning and corrected in the afternoon by measuring
+them. Recording that here rather than quietly editing the earlier rows, because the corrections are
+the useful part.
+
+**I had the wrong model of how a browser prints.** I assumed an element's position on screen tells
+you which printed page it lands on. It does not: printing is a separate layout pass with its own
+pagination. The method built on that assumption located 0 of 600 facts. The fix, reading the link
+annotations Chromium writes into the PDF, works because those come from the pagination pass itself.
+
+**The most interesting idea in the plan did not survive.** Using tagged statements as an oracle for
+figures restated in prose was the argument for including reconciliation, and it needed prose to
+restate tagged figures often enough to label a benchmark for free. It does not: 19 of 50, against a
+threshold I had written down beforehand. Cut.
+
+**One correction was legitimate and one would not have been.** My first sample drew every untagged
+number in the document, including table grids and page footers, which did not match a hypothesis
+about prose. Fixing that denominator was right, and moved the result from 15 to 19. Tightening the
+filter further would likely have pushed it past 20, and that is where I stopped. Fixing a
+measurement that does not match its definition is not the same as tuning one until it agrees with
+you, and the pre-registered threshold exists to make the difference visible.
 
 ## How I keep this useful
 

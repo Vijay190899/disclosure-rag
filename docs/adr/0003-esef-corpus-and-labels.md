@@ -1,8 +1,17 @@
 # ADR-0003: ESEF filings as the corpus, and Inline XBRL as the label source
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [ADR-0007](0007-m0-probe-outcome.md)
 - **Date:** 2026-07-29
 - **Supersedes:** "corpus is public/mock financial filings" in the previous technical documentation
+
+> **Amendment, same day, after the M0 probe.** Two claims below did not survive contact with the
+> data. There are **no German filings** in the open index, because Germany's officially appointed
+> mechanism is the Unternehmensregister and it does not publish into it, so the corpus is Austrian
+> instead: still German-language, still ESEF. And the oracle-against-narrative construction, which
+> is the most interesting idea in this record, **failed its threshold at 19 of 50** and has been cut.
+> The positional-labels argument held up completely, at 865 of 865 facts located. Details and
+> numbers in [ADR-0007](0007-m0-probe-outcome.md). The reasoning below is left as written, because
+> it is the thinking the probe was designed to test.
 
 ## Context
 

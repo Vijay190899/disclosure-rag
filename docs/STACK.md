@@ -24,10 +24,18 @@ This is the part of the stack that does not appear in other RAG projects, and it
 - **Arelle** to extract Inline XBRL facts: concept, value, unit, `scale`, `sign` and `contextRef`.
   `contextRef` is what distinguishes the current year from the prior-year comparative, and ignoring
   it would silently corrupt every label.
-- **Playwright** driving headless Chromium to render the filing and read `getBoundingClientRect()`
-  on each `ix:` element, then print the same pass to PDF. One rendering pass, one coordinate space.
-  If the geometry and the PDF came from different passes, the coordinates would not line up and
-  every measurement would be wrong.
+- **Playwright** driving headless Chromium to print the filing to PDF, with each tagged fact wrapped
+  in an anchor beforehand. Chromium preserves anchors as PDF link annotations carrying a page number
+  and a rectangle, and **PyMuPDF** reads them back.
+
+  The obvious approach, reading `getBoundingClientRect()` in the browser, does not work: it located
+  0 of 600 facts, because screen layout and print layout are different layouts and Chromium
+  repaginates when printing. Link annotations come from the pagination pass itself. Measured at
+  865 of 865 facts located, median IoU 0.947. See [ADR-0007](adr/0007-m0-probe-outcome.md).
+- **Corpus: Austrian ESEF filings.** German-language, so the compound-noun argument holds, and the
+  ESEF mechanics are identical because they come from an EU regulation. Germany itself is not
+  available: its officially appointed mechanism is the Unternehmensregister, which does not publish
+  into the open index.
 
 ## Serving plane (planned, M2 to M4)
 
