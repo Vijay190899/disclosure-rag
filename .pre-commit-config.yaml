@@ -1,10 +1,29 @@
+# Ruff runs from the project environment rather than from a pinned mirror.
+#
+# The mirror was pinned at v0.7.4 while pyproject resolved ruff 0.16.0, so two
+# different linters with different rule sets were checking the same code: the
+# old one still had ANN101 and ANN102, which modern ruff removed, and CI failed
+# on annotations that `make lint` accepted. Using the installed ruff makes the
+# version in pyproject the single source of truth and the drift cannot recur.
+#
+# These hooks need the project environment, so run them through `uv run` or an
+# activated venv.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.7.4
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix]
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
       - id: ruff-format
+        name: ruff format
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
