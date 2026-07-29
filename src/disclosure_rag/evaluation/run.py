@@ -71,14 +71,16 @@ def render_table(name: str, scores: list[StratumScore]) -> str:
     lines = [
         f"\nRetriever: {name}",
         "",
-        "| Stratum | n | recall@1 | recall@5 | recall@10 | citation coverage@1 | tightness |",
-        "|---|---|---|---|---|---|---|",
+        "| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 "
+        "| shown first when found | tightness |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for score in scores:
         lines.append(
             f"| {score.stratum.value} | {score.questions} | "
             f"{score.recall_at_1:.3f} | {score.recall_at_5:.3f} | {score.recall_at_10:.3f} | "
-            f"{score.citation_coverage_at_1:.3f} | {score.mean_tightness:.3f} |"
+            f"{score.citation_coverage_at_1:.3f} | {score.shown_first_when_found:.3f} | "
+            f"{score.mean_tightness:.3f} |"
         )
     return "\n".join(lines)
 

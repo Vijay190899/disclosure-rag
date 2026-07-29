@@ -59,12 +59,12 @@ def humanise_concept(concept: str) -> str:
 
 
 def describe_period(period: str) -> str:
-    """Render a ledger period as a phrase."""
+    """Render a ledger period as a phrase, in the language of the corpus."""
     if period.startswith("instant:"):
-        return f"as at {period.removeprefix('instant:')}"
+        return f"zum {period.removeprefix('instant:')}"
     if "/" in period:
         start, end = period.split("/", 1)
-        return f"for the period {start} to {end}"
+        return f"für den Zeitraum {start} bis {end}"
     return ""
 
 
@@ -86,10 +86,20 @@ def questions_from_ledger(ledger: FactLedger, limit_per_document: int = 40) -> l
         key = (fact.concept, fact.period)
         if key in seen or not fact.concept:
             continue
+
+        # The subject must be the label the issuer declared, not the concept
+        # name. Concept names are English and these documents are German, so a
+        # question built from one has no vocabulary in common with the text it
+        # is asking about. A concept with no declared label is skipped rather
+        # than asked about in English, because that question is unanswerable by
+        # construction and would depress the score for no reason. ADR-0009.
+        subject = ledger.concept_labels.get(fact.concept)
+        if not subject:
+            continue
+
         seen.add(key)
         period = describe_period(fact.period)
-        subject = humanise_concept(fact.concept)
-        text = f"What was {subject} {period}?".replace("  ", " ")
+        text = f"Wie hoch war {subject} {period}?".replace("  ", " ")
         questions.append(
             Question(
                 question_id=f"{ledger.document_id}:ef:{fact.fact_id}",

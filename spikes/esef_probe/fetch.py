@@ -100,11 +100,16 @@ def _extract_report(archive: bytes, destination: Path) -> Path | None:
         target = destination / "report.xhtml"
         target.write_bytes(bundle.read(biggest))
 
-        # Stylesheets and images affect layout, so the render needs them too.
+        # Stylesheets and images affect layout, so the render needs them.
+        # Label linkbases are kept because the evaluation set needs the German
+        # label the issuer declared for each concept: questions built from XBRL
+        # concept names come out in English and the documents are German, which
+        # made the first baseline unanswerable. See ADR-0009.
+        keep = (".css", ".png", ".jpg", ".jpeg", ".svg", ".woff2", ".xml", ".xsd")
         for info in bundle.infolist():
             if info.is_dir() or info is biggest:
                 continue
-            if info.filename.lower().endswith((".css", ".png", ".jpg", ".jpeg", ".svg", ".woff2")):
+            if info.filename.lower().endswith(keep):
                 out = destination / Path(info.filename).name
                 out.write_bytes(bundle.read(info))
         return target

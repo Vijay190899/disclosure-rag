@@ -63,17 +63,22 @@ The run established, on real documents rather than fixtures, that a table row su
 extraction intact, that spans propagate through chunking so every gold fact is contained by some
 chunk, and that the two renders agree on pagination.
 
-It also caught two problems, both in the measurement rather than the pipeline. Citation IoU was
-unreachable by construction, since a tagged number is 0.00026 of a page and the block citing it is
-0.0175, so scoring moved to containment. And the exact-figure questions are generated from English
-concept names while the documents are German, which lexical retrieval cannot bridge. Retrieving on
-the German label ranks the right chunk 4th and on the figure itself 1st, so the pipeline is sound
-and the question set is not. [ADR-0009](adr/0009-m2-baseline-findings.md).
+It also caught two problems, both in the measurement rather than the pipeline, and both are fixed.
+Citation IoU was unreachable by construction, so scoring moved to containment. Questions were
+generated from English concept names against German documents, so they now use the German label the
+issuer declares in the taxonomy linkbase. [ADR-0009](adr/0009-m2-baseline-findings.md).
 
-Remaining: take German concept labels from the taxonomy label linkbase in the ESEF package, which
-the probe's fetcher discarded, then rebuild the stratum and record the first honest baseline.
+**First baseline, BM25 over 843 chunks and 117 questions:**
 
-Done when: there is a baseline number I did not choose after seeing the result.
+| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found | tightness |
+|---|---|---|---|---|---|---|---|
+| exact figure | 117 | 0.231 | 0.462 | 0.538 | 0.231 | 0.429 | 0.025 |
+
+Remaining in M2: the ablation ladder. Dense retrieval as the next delta row, then hybrid fusion,
+then a reranker, each with a confidence interval. Also worth doing: load the official IFRS German
+labels so concepts are not skipped when an issuer bundles only its own extensions.
+
+Done when: every component in the stack has a delta row showing what it bought.
 
 ## M3. Grounded answers and the number this project is for
 

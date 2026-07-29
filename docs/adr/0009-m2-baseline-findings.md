@@ -76,15 +76,37 @@ Confirmed directly, retrieving the chunk that covers the gold fact:
 So the ingest, chunking, span propagation and scoring are all sound. The
 question set is the broken part.
 
-**Decision: the exact-figure stratum is not valid until questions are generated
-in the language of the document.** The current baseline is recorded as 0.000 with
-this explanation attached, and it is not reported as a retrieval result, because
-it is not one.
+**Decision: questions are generated from the German label the issuer declares
+for each concept**, read from the taxonomy label linkbase that ships inside the
+ESEF report package. A concept with no declared label is skipped rather than
+asked about in English, because such a question is unanswerable by construction
+and would depress the score for a reason unrelated to retrieval.
 
-The fix is to take the German label for each concept from the taxonomy's label
-linkbase, which ships inside the ESEF report package. The probe's fetcher
-extracted only the report and its stylesheets and discarded the linkbases, so
-this needs the corpus fetched again before the stratum can be rebuilt.
+The probe's fetcher had been discarding the linkbases, keeping only the report
+and its stylesheets, so the corpus was fetched again.
+
+### The baseline this produced
+
+| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found | tightness |
+|---|---|---|---|---|---|---|---|
+| exact figure | 117 | 0.231 | 0.462 | 0.538 | 0.231 | 0.429 | 0.025 |
+
+The number worth reading is the second from last. When the answer is retrieved
+anywhere in the top ten, it is ranked first only 43% of the time. On the rest,
+the system holds the right passage and shows the reader a different one. That is
+the failure this project was built to expose, and it is invisible to
+answer-level scoring.
+
+Tightness of 0.025 means a citation is roughly forty times the area of the
+number it points at, which is what block-level citation costs and what
+claim-level attribution in M5 should improve.
+
+A note on label availability, since it limits the corpus. Issuers must declare
+labels for their own extension concepts, but standard IFRS labels live in the
+official taxonomy, which packages reference rather than bundle. Coverage
+therefore varies: 92 of 92 concepts for one filing, 84 of 107 for another, and
+19 of 94 for a third that bundled only its extensions. Loading the official IFRS
+German labels would fix the gap and is the obvious next corpus improvement.
 
 I considered using the document's own row label as the question text, since it
 is right there in the same block. Rejected: the row label sits in the same block

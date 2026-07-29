@@ -159,24 +159,34 @@ German-language, still ESEF.
 
 Roughly a week of work avoided, for an afternoon of measurement. That is what the gate was for.
 
-### The pipeline, first run
+### First baseline
 
-Ingest, chunking, BM25 retrieval and scoring now run end to end over 843 chunks and 120 questions.
-The run confirmed three things that had been assumptions: a table row survives block extraction
-intact, so the label and its figures stay together; spans propagate through chunking, so every gold
-fact is contained by some chunk; and searching for a figure ranks the right chunk first, which is
-the first evidence behind the hybrid retrieval argument.
+BM25 over 843 chunks, 117 questions, three Austrian filings. Deterministic, no model, no server, so
+the whole run takes seconds and anyone can reproduce it.
 
-It also caught two defects, both in the measurement rather than the pipeline, and both are written
-up in [ADR-0009](docs/adr/0009-m2-baseline-findings.md). Citation IoU turned out to be unreachable
-by construction, because a tagged number covers 0.00026 of a page while the block citing it covers
-0.0175, so a perfect citation scores about 0.015 and the threshold was measuring the size
-difference rather than the citation. Scoring moved to containment. And the questions are generated
-from English concept names while the documents are German, so lexical retrieval has nothing to
-match on. The German label ranks the right chunk 4th and the figure itself ranks it 1st.
+| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 | shown first when found | tightness |
+|---|---|---|---|---|---|---|---|
+| exact figure | 117 | 0.231 | 0.462 | 0.538 | 0.231 | **0.429** | 0.025 |
 
-**So there is no honest baseline number yet.** The pipeline works; the question set does not, and
-publishing 0.000 as a retrieval result would be reporting my own bug as a finding.
+**The bolded number is the point of the project.** When the answer is retrieved at all, it is shown
+first only 43% of the time. So on more than half the questions where this system *had* the right
+passage, the region it would put in front of a reader is the wrong one. Answer-level scoring cannot
+see that, and it is exactly the failure a person doing verification would care about.
+
+Tightness of 0.025 says a citation is currently about forty times larger than the number it is
+pointing at, because citations are block-level. That is the headroom, and it is what claim-level
+attribution in M5 is for.
+
+This is the easy control stratum, not the headline. Questions name a concept and a period, and the
+answer sits in a table row. It is the number to beat, not the number to be proud of.
+
+Getting here took two corrections, both in the measurement rather than the pipeline, both written up
+in [ADR-0009](docs/adr/0009-m2-baseline-findings.md). Citation IoU was unreachable by construction,
+since a tagged number covers 0.00026 of a page and the block citing it covers 0.0175, so a perfect
+citation scored about 0.015 and the threshold was measuring the size difference rather than the
+citation. Scoring moved to containment. Then the run still returned 0.000, because questions were
+generated from English concept names while the documents are German. They are now built from the
+German label the issuer declares in the taxonomy linkbase.
 
 ## Targets
 

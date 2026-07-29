@@ -25,8 +25,19 @@ Tightness is the share of the cited region that is actually the answer, so it
 starts low with block-level citations and rises as citations get finer. Together
 the pair says "it points at the right place, and here is how precisely".
 
-Both are deterministic functions of the index and the question set, so they can
-gate CI without a model call. ADR-0006.
+Note that ``recall_at_1`` and ``citation_coverage_at_1`` are the same quantity
+by construction: both ask whether the top result contains the gold region. Both
+are reported because they answer different questions in a reader's head, but the
+informative comparison is **recall@5 against coverage@1**. The difference between
+them is the share of questions where the system had the answer in hand and
+showed something else first.
+
+``shown_first_when_found`` states that directly: of the questions where the
+answer was retrieved anywhere in the top ten, how often was it ranked first.
+That is the number this project is really about.
+
+All of these are deterministic functions of the index and the question set, so
+they can gate CI without a model call. ADR-0006.
 """
 
 from __future__ import annotations
@@ -95,6 +106,10 @@ class StratumScore(BaseModel):
         default=0.0,
         description="Share of questions whose top result contains the gold region",
     )
+    shown_first_when_found: float = Field(
+        default=0.0,
+        description="Of questions where the answer was retrieved at all, share shown at rank 1",
+    )
     mean_tightness: float = Field(
         default=0.0,
         description="Share of the cited region that is the answer, where correct",
@@ -139,13 +154,15 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
             for result, gold in paired
             if result.top_coverage(gold) >= COVERAGE_THRESHOLD
         ]
+        at_1, at_10 = _recall_at(paired, 1), _recall_at(paired, 10)
         scores.append(
             StratumScore(
                 stratum=stratum,
                 questions=len(paired),
-                recall_at_1=_recall_at(paired, 1),
+                recall_at_1=at_1,
                 recall_at_5=_recall_at(paired, 5),
-                recall_at_10=_recall_at(paired, 10),
+                recall_at_10=at_10,
+                shown_first_when_found=at_1 / at_10 if at_10 else 0.0,
                 citation_coverage_at_1=sum(1 for value in coverages if value >= COVERAGE_THRESHOLD)
                 / len(coverages),
                 mean_tightness=sum(correct) / len(correct) if correct else 0.0,

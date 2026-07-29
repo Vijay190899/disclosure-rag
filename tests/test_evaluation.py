@@ -25,8 +25,9 @@ def test_concept_names_become_readable() -> None:
 
 
 def test_instant_and_duration_periods_read_differently() -> None:
-    assert describe_period("instant:2022-12-31") == "as at 2022-12-31"
-    assert "2022-01-01 to 2022-12-31" in describe_period("2022-01-01/2022-12-31")
+    """Phrased in German: questions must share a language with the documents."""
+    assert describe_period("instant:2022-12-31") == "zum 2022-12-31"
+    assert "2022-01-01 bis 2022-12-31" in describe_period("2022-01-01/2022-12-31")
 
 
 def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
@@ -56,15 +57,28 @@ def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
         document_id="doc",
         facts=[LocatedFact(fact=fact, span=GOLD)],
         prose_pairs=pairs,
+        concept_labels={"ifrs-full:Assets": "Bilanzsumme"},
     )
 
 
-def test_exact_figure_questions_carry_gold_spans() -> None:
+def test_exact_figure_questions_use_the_declared_label() -> None:
     questions = questions_from_ledger(ledger_with())
     assert len(questions) == 1
     assert questions[0].stratum == Stratum.EXACT_FIGURE
     assert questions[0].gold_spans == [GOLD]
-    assert "assets" in questions[0].text.lower()
+    assert "Bilanzsumme" in questions[0].text
+
+
+def test_concepts_without_a_declared_label_are_skipped() -> None:
+    """Asking in English about a German document is unanswerable by construction.
+
+    Skipping is right rather than falling back: an unanswerable question would
+    depress the score for a reason that has nothing to do with retrieval.
+    ADR-0009.
+    """
+    ledger = ledger_with()
+    ledger.concept_labels = {}
+    assert questions_from_ledger(ledger) == []
 
 
 def test_unconfirmed_prose_pairs_are_not_used_as_questions() -> None:

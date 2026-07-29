@@ -17,6 +17,7 @@ from pathlib import Path
 from disclosure_rag.labels.facts import LxmlFactSource
 from disclosure_rag.labels.ledger import FactLedger, build, write_index, write_review_csv
 from disclosure_rag.labels.locate import confirm_by_text, locate_facts, render_to_pdf
+from disclosure_rag.labels.taxonomy import load_labels
 
 
 def _page_blocks(pdf_path: Path) -> list[list[str]]:
@@ -46,7 +47,17 @@ def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None)
 
     stamped = work / "report.stamped.xhtml"
     facts = source.extract(report, stamped_out=stamped)
-    print(f"[labels] {document_id}: {len(facts)} tagged numeric facts")
+
+    # Label linkbases sit alongside the report inside the ESEF package. Without
+    # them the question generator falls back to English concept names, which
+    # the documents do not contain. See ADR-0009.
+    concept_labels = load_labels(report.parent)
+    used = {fact.concept for fact in facts}
+    matched = len(used & concept_labels.keys())
+    print(
+        f"[labels] {document_id}: {len(facts)} tagged numeric facts, "
+        f"{matched}/{len(used)} concepts have a declared label"
+    )
 
     stamped_pdf = render_to_pdf(stamped, work / "stamped.pdf")
     located = locate_facts(stamped_pdf)
@@ -63,7 +74,9 @@ def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None)
     # no anchors and no tags, and it is what prose text is read from.
     plain_pdf = render_to_pdf(report, work / "document.pdf")
 
-    ledger = build(document_id, facts, located, _page_blocks(plain_pdf), confirmation)
+    ledger = build(
+        document_id, facts, located, _page_blocks(plain_pdf), confirmation, concept_labels
+    )
     ledger.write(work / "ledger.json")
     print(f"[labels] {document_id}: {len(ledger.prose_pairs)} prose pairs")
     return ledger

@@ -97,6 +97,10 @@ class FactLedger(BaseModel):
     prose_pairs: list[ProsePair] = Field(default_factory=list)
     coverage: float = Field(default=0.0, description="Share of facts that were located")
     confirmation: Confirmation = Field(default_factory=Confirmation)
+    concept_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Concept name to its declared label, from the taxonomy linkbase",
+    )
 
     def spans_for(self, fact_id: str) -> list[Span]:
         return [item.span for item in self.facts if item.fact.fact_id == fact_id]
@@ -219,6 +223,7 @@ def build(
     located: dict[str, Span],
     page_blocks: list[list[str]] | None = None,
     confirmation: Confirmation | None = None,
+    concept_labels: dict[str, str] | None = None,
 ) -> FactLedger:
     """Join extracted facts with their locations into a ledger."""
     rows = [
@@ -236,6 +241,7 @@ def build(
         prose_pairs=pairs,
         coverage=len(rows) / len(facts) if facts else 0.0,
         confirmation=confirmation or Confirmation(),
+        concept_labels=concept_labels or {},
     )
 
 
