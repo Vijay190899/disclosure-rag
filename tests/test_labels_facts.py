@@ -120,3 +120,9 @@ def test_stamping_preserves_the_text_around_a_fact(tmp_path: Path) -> None:
 def test_extraction_without_an_output_path_does_not_write(tmp_path: Path) -> None:
     LxmlFactSource().extract(FIXTURE)
     assert not list(tmp_path.iterdir())
+
+
+def test_unit_refs_resolve_to_their_measure() -> None:
+    """A fact must report EUR, not the document-local id "u-1"."""
+    facts = LxmlFactSource().extract(FIXTURE)
+    assert {fact.unit for fact in facts} == {"EUR"}

@@ -1,23 +1,44 @@
-"""Tests for the FastAPI surface."""
+"""Tests for the HTTP surface."""
 
 from fastapi.testclient import TestClient
 
 from disclosure_rag import __version__
 from disclosure_rag.app import app
 
-client = TestClient(app)
-
 
 def test_health_reports_ok_and_version() -> None:
-    response = client.get("/health")
-    assert response.status_code == 200
-    body = response.json()
+    with TestClient(app) as client:
+        body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["version"] == __version__
 
 
 def test_openapi_schema_is_generated() -> None:
-    """Catches response-model mistakes that would otherwise only fail at runtime."""
-    response = client.get("/openapi.json")
-    assert response.status_code == 200
-    assert "/health" in response.json()["paths"]
+    """Catches response-model mistakes that would otherwise fail at runtime."""
+    with TestClient(app) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+    assert {"/health", "/query", "/documents"} <= set(paths)
+
+
+def test_the_service_starts_without_a_corpus() -> None:
+    """A missing corpus must degrade, not crash: the image has no data baked in."""
+    with TestClient(app) as client:
+        assert client.get("/documents").json() == []
+
+
+def test_querying_an_unknown_document_is_a_404() -> None:
+    with TestClient(app) as client:
+        response = client.post("/query", json={"question": "Bilanzsumme", "document_id": "absent"})
+    assert response.status_code == 404
+
+
+def test_an_empty_question_is_rejected_by_validation() -> None:
+    with TestClient(app) as client:
+        response = client.post("/query", json={"question": "", "document_id": "doc"})
+    assert response.status_code == 422
+
+
+def test_every_response_carries_a_request_id() -> None:
+    with TestClient(app) as client:
+        response = client.get("/health")
+    assert response.headers.get("x-request-id")

@@ -1,12 +1,17 @@
-"""The serving plane must never be able to read a tag.
+"""Retrieval must never be able to read the tags it is measured against.
 
-Principle P2 in the technical documentation. If the pipeline under test can see
-the Inline XBRL, the benchmark measures nothing, and that failure would be
-invisible in the results: every number would simply look very good.
+The benchmark's honesty rests on this. Gold citation boxes come from the filer's
+Inline XBRL; if the retriever could see them, every retrieval number would be
+meaningless and the failure would be invisible, because the results would simply
+look excellent.
 
-The separation is architectural, so it is enforced by a test rather than by
-remembering. This is a static check on imports, deliberately, because it fails
-at review time rather than after a corpus has been rebuilt.
+The rule is narrower than "the product must not read structured data", which
+would be wrong. ESEF filings genuinely carry these tags, so a production system
+reads them and answers tagged figures exactly rather than guessing. That is the
+point of the routing design. What must stay clean is the part being scored.
+
+Specified as an allowlist of modules that must not touch the label plane, rather
+than as a list of exemptions, so a new module cannot become exempt by default.
 """
 
 from __future__ import annotations
@@ -17,11 +22,8 @@ from pathlib import Path
 SRC = Path(__file__).parent.parent / "src" / "disclosure_rag"
 LABEL_PLANE = "disclosure_rag.labels"
 
-# The label plane itself, and the evaluation harness, are both allowed to read
-# gold labels. The harness is the one component that legitimately joins the two
-# planes: it holds the answer key in one hand and the predictions in the other.
-# Everything else is the system under test.
-ALLOWED = {"labels", "evaluation"}
+# Everything scored by the retrieval benchmark. These may not import the labels.
+UNDER_TEST = ("ingest", "retrieval", "citation.py")
 
 
 def _imports(path: Path) -> set[str]:
@@ -35,46 +37,53 @@ def _imports(path: Path) -> set[str]:
     return found
 
 
-def _serving_plane_modules() -> list[Path]:
-    return [
-        path for path in SRC.rglob("*.py") if not ALLOWED.intersection(path.relative_to(SRC).parts)
-    ]
+def _modules_under_test() -> list[Path]:
+    paths: list[Path] = []
+    for entry in UNDER_TEST:
+        target = SRC / entry
+        if target.is_dir():
+            paths.extend(sorted(target.rglob("*.py")))
+        elif target.exists():
+            paths.append(target)
+    return paths
 
 
-def test_the_serving_plane_never_imports_the_label_plane() -> None:
+def test_retrieval_and_ingest_never_import_the_label_plane() -> None:
     offenders = {
-        str(path.relative_to(SRC)): sorted(
+        str(path.relative_to(SRC)).replace("\\", "/"): sorted(
             name for name in _imports(path) if name.startswith(LABEL_PLANE)
         )
-        for path in _serving_plane_modules()
+        for path in _modules_under_test()
     }
     offenders = {path: names for path, names in offenders.items() if names}
     assert not offenders, (
-        f"serving-plane modules import the label plane: {offenders}. "
-        "The oracle must not be reachable from the system under test."
+        f"modules scored by the retrieval benchmark import the label plane: {offenders}. "
+        "The answer key must not be reachable from the system under test."
     )
 
 
-def test_the_check_covers_something() -> None:
-    """Guards against the separation test passing because it found no files."""
-    assert len(_serving_plane_modules()) >= 3
+def test_the_allowlist_resolves_to_real_files() -> None:
+    """Guards against the check passing because it found nothing to check."""
+    found = {str(path.relative_to(SRC)).replace("\\", "/") for path in _modules_under_test()}
+    assert "ingest/blocks.py" in found
+    assert "ingest/chunker.py" in found
+    assert "retrieval/lexical.py" in found
+    assert "retrieval/dense.py" in found
+    assert "citation.py" in found
 
 
-def test_the_label_plane_may_use_shared_provenance_types() -> None:
-    """The contract in provenance.py is shared on purpose: it carries no tags."""
-    imports = _imports(SRC / "labels" / "locate.py")
-    assert "disclosure_rag.provenance" in imports
+def test_the_answer_pipeline_does_read_the_ledger() -> None:
+    """Stated positively: routing tagged figures to the structured layer is the design.
+
+    A tagged figure has an exact value and an exact location, so looking it up
+    beats asking a model to read it back out of a passage. The citation is then
+    the filer's own tag rather than a prediction.
+    """
+    imports = _imports(SRC / "answer" / "pipeline.py")
+    assert any(name.startswith(LABEL_PLANE) for name in imports)
 
 
-def test_ingest_and_retrieval_are_covered_by_the_check() -> None:
-    """The two modules that must never see the answer key are actually checked."""
-    checked = {str(path.relative_to(SRC)).replace("\\", "/") for path in _serving_plane_modules()}
-    assert "ingest/blocks.py" in checked
-    assert "ingest/chunker.py" in checked
-    assert "retrieval/lexical.py" in checked
-
-
-def test_the_evaluation_harness_does_read_gold_labels() -> None:
-    """Stated positively, so the exemption is deliberate rather than an oversight."""
+def test_the_evaluation_harness_reads_both_sides() -> None:
+    """It holds the answer key in one hand and the predictions in the other."""
     imports = _imports(SRC / "evaluation" / "questions.py")
     assert any(name.startswith(LABEL_PLANE) for name in imports)

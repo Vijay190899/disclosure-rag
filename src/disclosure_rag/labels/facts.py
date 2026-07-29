@@ -133,6 +133,29 @@ def normalise_number(text: str, fmt: str = "") -> Decimal | None:
 class LxmlFactSource:
     """Reads ``ix:nonFraction`` elements directly. See ADR-0008."""
 
+    def _units(self, tree: etree._ElementTree) -> dict[str, str]:
+        """Map unit id to its measure, so a fact reports EUR rather than "u-1".
+
+        ``unitRef`` is a document-local identifier pointing at a unit
+        declaration. Surfacing it raw is wrong: a reader has no idea what "u-1"
+        means, and neither does a downstream consumer.
+        """
+        units: dict[str, str] = {}
+        for unit in tree.iter(f"{{{XBRLI}}}unit"):
+            unit_id = unit.get("id")
+            if not unit_id:
+                continue
+            measures = [
+                (measure.text or "").strip()
+                for measure in unit.iter(f"{{{XBRLI}}}measure")
+                if (measure.text or "").strip()
+            ]
+            if not measures:
+                continue
+            # iso4217:EUR becomes EUR; xbrli:pure and xbrli:shares keep their name.
+            units[unit_id] = "/".join(measure.rsplit(":", 1)[-1] for measure in measures)
+        return units
+
     def _periods(self, tree: etree._ElementTree) -> dict[str, str]:
         """Map context id to a period.
 
@@ -185,6 +208,7 @@ class LxmlFactSource:
         parser = etree.XMLParser(recover=True, huge_tree=True)
         tree = etree.parse(str(report), parser)
         periods = self._periods(tree)
+        units = self._units(tree)
 
         facts: list[Fact] = []
         # Materialise first: wrapping mutates the tree while iterating over it.
@@ -208,7 +232,7 @@ class LxmlFactSource:
                     value=base * (Decimal(10) ** scale) * sign,
                     scale=scale,
                     sign=sign,
-                    unit=element.get("unitRef") or "",
+                    unit=units.get(element.get("unitRef") or "", ""),
                     context=context_ref,
                     period=periods.get(context_ref, ""),
                 )
