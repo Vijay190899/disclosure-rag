@@ -27,13 +27,45 @@ XBRLI = "http://www.xbrl.org/2003/instance"
 PROBE_ID_ATTR = "data-probe-id"
 
 
-def normalise_number(text: str) -> Decimal | None:
-    """Turn displayed text into a number.
+def _decimal_separator(cleaned: str, fmt: str) -> str | None:
+    """Work out which of . and , is the decimal point, or None if there is none.
 
-    Handles both the 1,204.50 and the 1.204,50 conventions by treating whichever
-    separator appears last as the decimal point. Filings in this corpus are
-    German, so the second form is common and assuming the first would be wrong
-    by three orders of magnitude.
+    The format attribute settles it outright when present. Inline XBRL declares
+    the convention through a transformation such as ixt:num-comma-decimal, so
+    guessing is only necessary when the attribute is missing.
+
+    The fallback matters because a single separator group is genuinely
+    ambiguous: "1.204" is 1204 under the German convention and 1.204 under the
+    English one. Three digits after the separator means grouping, which is the
+    right call for financial statements and gets "0,5" right as well because it
+    has only one digit after the comma.
+    """
+    normalised_fmt = (fmt or "").lower().replace("_", "-")
+    if "comma-decimal" in normalised_fmt or "commadecimal" in normalised_fmt:
+        return ","
+    if "dot-decimal" in normalised_fmt or "dotdecimal" in normalised_fmt:
+        return "."
+
+    last_comma, last_dot = cleaned.rfind(","), cleaned.rfind(".")
+    if last_comma >= 0 and last_dot >= 0:
+        # Both present: the later one is the decimal point.
+        return "," if last_comma > last_dot else "."
+
+    separator = "," if last_comma >= 0 else ("." if last_dot >= 0 else None)
+    if separator is None:
+        return None
+    if cleaned.count(separator) > 1:
+        return None  # repeated, so it is grouping
+    return None if len(cleaned.split(separator)[-1]) == 3 else separator
+
+
+def normalise_number(text: str, fmt: str = "") -> Decimal | None:
+    """Turn the text a reader sees into the number it represents.
+
+    This is the piece of the probe with real care in it. An error here would not
+    announce itself: it would silently rescale every label by a factor of a
+    thousand, and every downstream measurement would look plausible and be
+    wrong.
     """
     cleaned = re.sub(r"[^\d,.\-()]", "", text or "").strip()
     if not cleaned:
@@ -41,13 +73,20 @@ def normalise_number(text: str) -> Decimal | None:
 
     negative = cleaned.startswith("(") and cleaned.endswith(")")
     cleaned = cleaned.strip("()")
+    if cleaned.startswith("-"):
+        negative = True
+        cleaned = cleaned[1:]
 
-    last_comma = cleaned.rfind(",")
-    last_dot = cleaned.rfind(".")
-    if last_comma > last_dot:
+    separator = _decimal_separator(cleaned, fmt)
+    if separator == ",":
         cleaned = cleaned.replace(".", "").replace(",", ".")
-    else:
+    elif separator == ".":
         cleaned = cleaned.replace(",", "")
+    else:
+        cleaned = cleaned.replace(",", "").replace(".", "")
+
+    if not cleaned or cleaned == ".":
+        return None
 
     try:
         value = Decimal(cleaned)
@@ -87,7 +126,7 @@ def extract(report: Path) -> list[dict]:
     facts: list[dict] = []
     for index, element in enumerate(tree.iter(f"{{{IX}}}nonFraction")):
         displayed = "".join(element.itertext()).strip()
-        base = normalise_number(displayed)
+        base = normalise_number(displayed, element.get("format") or "")
         if base is None:
             continue
 

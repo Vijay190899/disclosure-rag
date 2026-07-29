@@ -85,6 +85,13 @@ cannot.
 - **lxml rather than Arelle.** Arelle resolves contexts and continuations properly and is the right
   choice for M1. For the probe, reading `ix:nonFraction` attributes directly is fewer moving parts
   and enough to answer the question.
+- **Number normalisation is the exception to the throwaway standard.** It reads the `format`
+  attribute, which declares the convention outright (`ixt:num-comma-decimal` against
+  `ixt:num-dot-decimal`), and falls back to a digit-grouping heuristic only when the attribute is
+  absent. This got real care because an error here does not announce itself: German filings write
+  1.204 for what English writes as 1,204, so the obvious reading is wrong by three orders of
+  magnitude and every downstream measurement would look plausible and be wrong. My first attempt
+  had exactly that bug, which is why the normaliser is covered by its own checks.
 - **Page index is computed arithmetically** from the CSS pixel offset and a fixed page height,
   rather than by tracking real page breaks. That approximation is itself part of what the
   verification step measures.

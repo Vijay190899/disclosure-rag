@@ -136,7 +136,7 @@ def run() -> dict:
 
     ledger = json.loads(LEDGER.read_text(encoding="utf-8"))
     pool: list[dict] = []
-    for name, facts in ledger.items():
+    for name in ledger:
         pdf_path = RENDERS / f"{name}.pdf"
         if not pdf_path.exists():
             continue

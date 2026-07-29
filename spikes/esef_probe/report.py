@@ -24,6 +24,23 @@ from . import (
 
 OUT = Path(__file__).parent / "REPORT.md"
 
+# The consequence of each verdict, written out here so the two branches read as
+# the decisions they are rather than as string assembly.
+A1_PASS_TEXT = "- **M4 reconciliation proceeds.**"
+A1_FAIL_TEXT = (
+    "- **M4 reconciliation is cut.** Narrative prose does not restate enough tagged figures "
+    "for the oracle to supply free labels. The project becomes disclosure location only, and "
+    "the README says so."
+)
+A2_PASS_TEXT = (
+    "- **Region-level citations proceed**, and citation IoU stays as the headline metric."
+)
+A2_FAIL_TEXT = (
+    "- **Citations drop to page level.** Browser geometry does not map onto the printed page "
+    "reliably enough. The IoU metric is removed rather than reported at a precision the "
+    "measurement does not support."
+)
+
 
 def _confirmed_count() -> int | None:
     """Prefer the hand-confirmed count over the generous automated one."""
@@ -93,19 +110,8 @@ def run() -> None:
             "sampled rows in `work/narrative_review.csv` by hand before trusting the A1 number."
         )
     else:
-        lines.append(
-            "- **M4 reconciliation proceeds.**" if a1_pass else
-            "- **M4 reconciliation is cut.** Narrative prose does not restate enough tagged "
-            "figures for the oracle to supply free labels. The project becomes disclosure "
-            "location only, and the README says so."
-        )
-        lines.append(
-            "- **Region-level citations proceed**, and citation IoU stays as the headline metric."
-            if a2_pass else
-            "- **Citations drop to page level.** Browser geometry does not map onto the printed "
-            "page reliably enough. The IoU metric is removed rather than reported at a precision "
-            "the measurement does not support."
-        )
+        lines.append(A1_PASS_TEXT if a1_pass else A1_FAIL_TEXT)
+        lines.append(A2_PASS_TEXT if a2_pass else A2_FAIL_TEXT)
 
     lines += [
         "",

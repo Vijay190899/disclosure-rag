@@ -51,8 +51,7 @@ def _extract_report(archive: bytes, destination: Path) -> Path | None:
         reports = [
             info
             for info in bundle.infolist()
-            if info.filename.lower().endswith((".xhtml", ".html"))
-            and not info.is_dir()
+            if info.filename.lower().endswith((".xhtml", ".html")) and not info.is_dir()
         ]
         if not reports:
             return None

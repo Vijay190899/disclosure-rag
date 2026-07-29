@@ -28,24 +28,24 @@ from .facts import PROBE_ID_ATTR
 PAGE_W_PX = 794
 PAGE_H_PX = 1123
 
-COLLECT_BOXES = """
-() => {
+COLLECT_BOXES = f"""
+() => {{
   const out = [];
-  document.querySelectorAll('[%s]').forEach(el => {
+  document.querySelectorAll('[{PROBE_ID_ATTR}]').forEach(el => {{
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return;
-    out.push({
-      probe_id: el.getAttribute('%s'),
+    out.push({{
+      probe_id: el.getAttribute('{PROBE_ID_ATTR}'),
       text: (el.textContent || '').trim(),
       x: r.left + window.scrollX,
       y: r.top + window.scrollY,
       w: r.width,
       h: r.height,
-    });
-  });
+    }});
+  }});
   return out;
-}
-""" % (PROBE_ID_ATTR, PROBE_ID_ATTR)
+}}
+"""
 
 
 def _to_page_box(raw: dict) -> dict:
@@ -72,9 +72,13 @@ def capture(report: Path, pdf_out: Path) -> list[dict]:
         page.goto(report.resolve().as_uri(), wait_until="networkidle")
         raw = page.evaluate(COLLECT_BOXES)
         # Same pass, so the coordinate space is shared between boxes and PDF.
-        page.pdf(path=str(pdf_out), width=f"{PAGE_W_PX}px", height=f"{PAGE_H_PX}px",
-                 print_background=True, margin={"top": "0", "bottom": "0",
-                                                "left": "0", "right": "0"})
+        page.pdf(
+            path=str(pdf_out),
+            width=f"{PAGE_W_PX}px",
+            height=f"{PAGE_H_PX}px",
+            print_background=True,
+            margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
+        )
         browser.close()
     return [_to_page_box(item) for item in raw]
 
@@ -109,9 +113,10 @@ def verify(pdf_path: Path, predictions: list[dict], sample: int = 200) -> dict:
             continue
         width, height = page.rect.width, page.rect.height
         best = max(
-            (_iou(prediction["bbox"],
-                  [h.x0 / width, h.y0 / height, h.x1 / width, h.y1 / height])
-             for h in hits),
+            (
+                _iou(prediction["bbox"], [h.x0 / width, h.y0 / height, h.x1 / width, h.y1 / height])
+                for h in hits
+            ),
             default=0.0,
         )
         if best > 0:
