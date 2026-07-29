@@ -345,15 +345,22 @@ The system exists to produce these numbers. They are the deliverable, not a by-p
 
 | Metric | What it answers | Labels from | Gate |
 |---|---|---|---|
-| recall@k, nDCG@10 | Did the right passage come back? | Ledger spans plus hand-labelled narrative | CI, deterministic |
-| **citation IoU@0.5** | **Does the citation point at the right region?** | Ledger bounding boxes | CI, deterministic |
+| recall@k | Did the right passage come back anywhere in the top k? | Ledger spans plus confirmed prose pairs | CI, deterministic |
+| **citation coverage@1** | **Does the region the reader is shown contain the answer?** | Ledger bounding boxes | CI, deterministic |
+| tightness | How much of the cited region is the answer? | Ledger bounding boxes | Reported beside coverage |
 | Abstention precision / recall | When it declines, was it right to? | Hand-labelled unanswerables | CI, deterministic |
 | Risk-coverage curve, AURC | Where should the abstention threshold sit? | Derived from the above | Reported, not gated |
 | Faithfulness, answer relevance | Is the prose grounded? | Model-judged | Nightly, off critical path |
 | p95 latency, cost per query | Is it usable and affordable? | Instrumentation | Reported |
 
-Citation IoU is the row this project is for. It is the claim in section 2 that standard evaluation
-cannot see, and I have not found it published for financial-document RAG.
+Citation coverage is the row this project is for. It is the claim in section 2 that standard
+evaluation cannot see, and I have not found it published for financial-document RAG.
+
+It is coverage rather than intersection over union because the two regions are not comparable in
+size: a tagged number occupies about 0.00026 of a page and the block citing it about 0.0175, so a
+perfectly correct citation scores an IoU near 0.015 and any threshold measures the size difference
+instead of the citation. Tightness is reported alongside, because coverage on its own is gameable
+by citing more. [ADR-0009](adr/0009-m2-baseline-findings.md) has the measurements.
 
 **Question set.** 100 paired questions, stratified 40 exact-figure, 30 narrative, 30 unanswerable,
 run through every configuration. The stratification is not decoration: hybrid retrieval's advantage

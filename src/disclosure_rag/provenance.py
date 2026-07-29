@@ -75,10 +75,51 @@ class Span(BaseModel):
         union = self.area + other.area - intersection
         return intersection / union if union > 0 else 0.0
 
+    def covers(self, other: Span) -> float:
+        """Fraction of ``other`` that lies inside this span.
+
+        This, not IoU, is the right primitive for scoring a citation. IoU
+        compares two regions of similar size, and here they are nothing of the
+        sort: a gold fact is a number, occupying about 0.03% of a page, while a
+        citation is the text block it sits in. Their IoU is on the order of
+        0.01 even when the citation is perfectly correct, so an IoU threshold
+        measures the size difference rather than the quality of the citation.
+
+        The question a reader actually cares about is "if I look where it
+        pointed, will I find the number?", which is containment.
+        """
+        if self.page != other.page or other.area <= 0:
+            return 0.0
+        x0, y0 = max(self.x0, other.x0), max(self.y0, other.y0)
+        x1, y1 = min(self.x1, other.x1), min(self.y1, other.y1)
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        return ((x1 - x0) * (y1 - y0)) / other.area
+
+    def tightness(self, other: Span) -> float:
+        """How much of this span is taken up by ``other``.
+
+        The counterpart to coverage. A citation covering the whole page always
+        contains the answer and is useless, so coverage alone can be gamed by
+        highlighting more. Reported alongside it as the headroom measure:
+        it rises as citations get finer.
+        """
+        if self.area <= 0:
+            return 0.0
+        return min(other.area / self.area, 1.0)
+
 
 def best_iou(predicted: Span, gold: list[Span]) -> float:
     """Score one predicted span against whichever gold span it best matches."""
     return max((predicted.iou(candidate) for candidate in gold), default=0.0)
+
+
+def best_coverage(gold: list[Span], predicted: list[Span]) -> float:
+    """Best fraction of any gold span contained in any predicted span."""
+    return max(
+        (span.covers(target) for span in predicted for target in gold),
+        default=0.0,
+    )
 
 
 def union_on_page(spans: list[Span]) -> Span | None:

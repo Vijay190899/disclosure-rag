@@ -159,6 +159,25 @@ German-language, still ESEF.
 
 Roughly a week of work avoided, for an afternoon of measurement. That is what the gate was for.
 
+### The pipeline, first run
+
+Ingest, chunking, BM25 retrieval and scoring now run end to end over 843 chunks and 120 questions.
+The run confirmed three things that had been assumptions: a table row survives block extraction
+intact, so the label and its figures stay together; spans propagate through chunking, so every gold
+fact is contained by some chunk; and searching for a figure ranks the right chunk first, which is
+the first evidence behind the hybrid retrieval argument.
+
+It also caught two defects, both in the measurement rather than the pipeline, and both are written
+up in [ADR-0009](docs/adr/0009-m2-baseline-findings.md). Citation IoU turned out to be unreachable
+by construction, because a tagged number covers 0.00026 of a page while the block citing it covers
+0.0175, so a perfect citation scores about 0.015 and the threshold was measuring the size
+difference rather than the citation. Scoring moved to containment. And the questions are generated
+from English concept names while the documents are German, so lexical retrieval has nothing to
+match on. The German label ranks the right chunk 4th and the figure itself ranks it 1st.
+
+**So there is no honest baseline number yet.** The pipeline works; the question set does not, and
+publishing 0.000 as a retrieval result would be reporting my own bug as a finding.
+
 ## Targets
 
 Not built yet. These are the numbers I am building toward, published now so that the bar is set

@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "qdrant-client>=1.12",
     "lxml>=5.3",            # Inline XBRL parsing in the label plane
+    "pymupdf>=1.24",        # PDF block parsing and page rendering in ingest
 ]
 
 [project.optional-dependencies]
@@ -29,8 +30,7 @@ dev = [
 # the service never renders anything, and these are large. Imported lazily in
 # disclosure_rag.labels.locate so the package stays importable without them.
 labels = [
-    "playwright>=1.48",     # headless Chromium, print-to-PDF
-    "pymupdf>=1.24",        # reads link annotations and page text back
+    "playwright>=1.48",     # headless Chromium, print-to-PDF for the label plane only
 ]
 # Throwaway probe dependencies. See spikes/esef_probe/README.md.
 spike = [

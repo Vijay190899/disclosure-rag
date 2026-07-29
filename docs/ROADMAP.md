@@ -1,7 +1,8 @@
 # Roadmap
 
-**Shipped so far: M0.** The feasibility gate has run and its result cut one milestone from this
-list. No pipeline code exists yet.
+**Shipped so far: M0 and M1, with M2 in progress.** The feasibility gate ran and cut one milestone
+from this list. The label plane is built and produces gold spans. The retrieval pipeline runs end
+to end, and its first run found two defects in the measurement rather than in itself.
 
 This file replaces the checklist that used to sit in the README. A checklist reads as a completion
 meter, and a meter at zero says less about a project than a dated log of what actually landed.
@@ -53,13 +54,24 @@ dimensions are resolved properly. Location by PDF link annotation, which the pro
 Done when: a committed dataset of located facts for 8 filings, and a rendered page with gold boxes
 drawn on it that I have looked at and confirmed are in the right places.
 
-## M2. Ingest, retrieval and the first baseline
+## M2. Ingest, retrieval and the first baseline (in progress)
 
-PyMuPDF block parsing, span-preserving chunking, embeddings into Qdrant, dense retrieval only.
-Idempotent one-command re-ingest, because chunking is the parameter I will most want to experiment
-with and a painful re-ingest means the experiment never happens.
+Built: PyMuPDF block parsing, span-preserving chunking, a BM25 baseline, question generation from
+the ledger, and coverage-based scoring. Ran end to end over 843 chunks and 120 questions.
 
-Then the 100-question evaluation set and a dense-only baseline before adding anything else.
+The run established, on real documents rather than fixtures, that a table row survives block
+extraction intact, that spans propagate through chunking so every gold fact is contained by some
+chunk, and that the two renders agree on pagination.
+
+It also caught two problems, both in the measurement rather than the pipeline. Citation IoU was
+unreachable by construction, since a tagged number is 0.00026 of a page and the block citing it is
+0.0175, so scoring moved to containment. And the exact-figure questions are generated from English
+concept names while the documents are German, which lexical retrieval cannot bridge. Retrieving on
+the German label ranks the right chunk 4th and on the figure itself 1st, so the pipeline is sound
+and the question set is not. [ADR-0009](adr/0009-m2-baseline-findings.md).
+
+Remaining: take German concept labels from the taxonomy label linkbase in the ESEF package, which
+the probe's fetcher discarded, then rebuild the stratum and record the first honest baseline.
 
 Done when: there is a baseline number I did not choose after seeing the result.
 

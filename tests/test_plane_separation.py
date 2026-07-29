@@ -17,6 +17,12 @@ from pathlib import Path
 SRC = Path(__file__).parent.parent / "src" / "disclosure_rag"
 LABEL_PLANE = "disclosure_rag.labels"
 
+# The label plane itself, and the evaluation harness, are both allowed to read
+# gold labels. The harness is the one component that legitimately joins the two
+# planes: it holds the answer key in one hand and the predictions in the other.
+# Everything else is the system under test.
+ALLOWED = {"labels", "evaluation"}
+
 
 def _imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -30,7 +36,9 @@ def _imports(path: Path) -> set[str]:
 
 
 def _serving_plane_modules() -> list[Path]:
-    return [path for path in SRC.rglob("*.py") if "labels" not in path.relative_to(SRC).parts]
+    return [
+        path for path in SRC.rglob("*.py") if not ALLOWED.intersection(path.relative_to(SRC).parts)
+    ]
 
 
 def test_the_serving_plane_never_imports_the_label_plane() -> None:
@@ -56,3 +64,17 @@ def test_the_label_plane_may_use_shared_provenance_types() -> None:
     """The contract in provenance.py is shared on purpose: it carries no tags."""
     imports = _imports(SRC / "labels" / "locate.py")
     assert "disclosure_rag.provenance" in imports
+
+
+def test_ingest_and_retrieval_are_covered_by_the_check() -> None:
+    """The two modules that must never see the answer key are actually checked."""
+    checked = {str(path.relative_to(SRC)).replace("\\", "/") for path in _serving_plane_modules()}
+    assert "ingest/blocks.py" in checked
+    assert "ingest/chunker.py" in checked
+    assert "retrieval/lexical.py" in checked
+
+
+def test_the_evaluation_harness_does_read_gold_labels() -> None:
+    """Stated positively, so the exemption is deliberate rather than an oversight."""
+    imports = _imports(SRC / "evaluation" / "questions.py")
+    assert any(name.startswith(LABEL_PLANE) for name in imports)
