@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "qdrant-client>=1.12",
+    "lxml>=5.3",            # Inline XBRL parsing in the label plane
 ]
 
 [project.optional-dependencies]
@@ -21,14 +22,20 @@ dev = [
     "httpx>=0.27",          # required by fastapi.testclient
     "ruff>=0.7",
     "mypy>=1.13",
+    "lxml-stubs>=0.5",
     "pre-commit>=4.0",
 ]
-# The spike is isolated so its heavy, throwaway dependencies never reach the
-# runtime image. See spikes/esef_probe/README.md.
+# Rendering tools for building the label corpus. Kept out of the runtime image:
+# the service never renders anything, and these are large. Imported lazily in
+# disclosure_rag.labels.locate so the package stays importable without them.
+labels = [
+    "playwright>=1.48",     # headless Chromium, print-to-PDF
+    "pymupdf>=1.24",        # reads link annotations and page text back
+]
+# Throwaway probe dependencies. See spikes/esef_probe/README.md.
 spike = [
-    "lxml>=5.3",        # ix: element parsing. Arelle is the M1 choice, see the spike README.
-    "playwright>=1.48", # headless Chromium for element geometry and print-to-PDF
-    "pymupdf>=1.24",    # reads the rendered PDF back to verify the geometry
+    "playwright>=1.48",
+    "pymupdf>=1.24",
     "httpx>=0.27",
 ]
 
@@ -62,7 +69,8 @@ files = ["src", "tests"]
 exclude = ["^spikes/"]
 
 [[tool.mypy.overrides]]
-module = ["qdrant_client.*"]
+# Optional label-plane tools, imported lazily and absent from the base install.
+module = ["qdrant_client.*", "fitz.*", "playwright.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
