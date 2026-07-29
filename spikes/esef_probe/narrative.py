@@ -42,16 +42,59 @@ from . import (
 from .facts import normalise_number
 
 NUMBER = re.compile(r"(?<![\w.,])-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?(?![\w])")
+SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+WORD = re.compile(r"[^\W\d_]{3,}", re.UNICODE)
 SEED = 20260729  # fixed so a rerun samples the same items
+
+# A1 is a claim about narrative prose, so the denominator has to be prose. The
+# first version of this stage sampled every untagged number in the document,
+# which pulled in untagged table grids, the table of contents, page footers and
+# the sustainability section. Those are not sentences and nobody would expect
+# them to restate a tagged fact, so including them measured the wrong thing.
+MIN_SENTENCE_CHARS = 60
+MIN_SENTENCE_WORDS = 8
+MAX_DIGIT_RATIO = 0.20
+
+
+def _sentence_around(text: str, position: int) -> str:
+    """The sentence containing a match, so prose can be told from a table row."""
+    start = 0
+    for piece in SENTENCE_SPLIT.split(text):
+        end = start + len(piece)
+        if start <= position <= end:
+            return piece.strip()
+        start = end + 1
+    return text.strip()
+
+
+def _is_prose(sentence: str) -> bool:
+    """True for something a person wrote as a sentence, false for a table row.
+
+    Three cheap signals together: long enough to be a sentence, enough real
+    words in it, and not mostly digits. A row like "Gesamt 197.315 737.935
+    4.230.415" fails the second and third; a sentence like "Die Position
+    Kassenbestand ist um EUR 136,3 Mio. gestiegen" passes all three.
+    """
+    if len(sentence) < MIN_SENTENCE_CHARS:
+        return False
+    if len(WORD.findall(sentence)) < MIN_SENTENCE_WORDS:
+        return False
+    digits = sum(character.isdigit() for character in sentence)
+    return digits / len(sentence) < MAX_DIGIT_RATIO
 
 
 def _tagged_boxes(name: str) -> dict[int, list[list[float]]]:
+    """Tagged regions per page, so this stage can exclude them.
+
+    The geometry stage writes a mapping of probe id to location, so the values
+    are what matter here rather than the keys.
+    """
     path = RENDERS / f"{name}.boxes.json"
     if not path.exists():
         return {}
     by_page: dict[int, list[list[float]]] = {}
-    for box in json.loads(path.read_text(encoding="utf-8")):
-        by_page.setdefault(box["page"], []).append(box["bbox"])
+    for location in json.loads(path.read_text(encoding="utf-8")).values():
+        by_page.setdefault(location["page"], []).append(location["bbox"])
     return by_page
 
 
@@ -77,13 +120,14 @@ def _candidates(pdf_path: Path, tagged: dict[int, list[list[float]]]) -> list[di
                 value = normalise_number(match.group())
                 if value is None or abs(value) < 100:
                     continue  # tiny numbers are note references and page numbers
-                start = max(0, match.start() - 90)
+                sentence = _sentence_around(text, match.start())
                 found.append(
                     {
                         "page": page_index,
                         "mention": match.group(),
                         "value": str(value),
-                        "context": " ".join(text[start : match.end() + 60].split()),
+                        "is_prose": _is_prose(sentence),
+                        "context": " ".join(sentence.split())[:220],
                     }
                 )
     document.close()
@@ -147,8 +191,17 @@ def run() -> dict:
         print("[narrative] no untagged numeric mentions found, run the geometry stage first")
         return {}
 
-    random.Random(SEED).shuffle(pool)
-    sample = pool[:NARRATIVE_SAMPLE_SIZE]
+    prose = [item for item in pool if item["is_prose"]]
+    print(
+        f"[narrative] {len(pool)} untagged numeric mentions, "
+        f"{len(prose)} of them in prose sentences ({len(prose) / len(pool):.1%})"
+    )
+    if not prose:
+        print("[narrative] no prose mentions found, cannot measure A1")
+        return {}
+
+    random.Random(SEED).shuffle(prose)
+    sample = prose[:NARRATIVE_SAMPLE_SIZE]
 
     rows: list[dict] = []
     counts = {"exact": 0, "derived": 0, "unresolved": 0}
@@ -181,6 +234,8 @@ def run() -> dict:
         "sampled": len(sample),
         "auto_resolved": resolved,
         "breakdown": counts,
+        "pool_all_untagged": len(pool),
+        "pool_prose": len(prose),
         "review_file": str(NARRATIVE_REVIEW),
         "note": "auto_resolved overcounts. Confirm rows in the CSV and use the confirmed count.",
     }

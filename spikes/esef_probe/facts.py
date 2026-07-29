@@ -23,8 +23,21 @@ from . import FILINGS, LEDGER, ensure_dirs
 
 IX = "http://www.xbrl.org/2013/inlineXBRL"
 XBRLI = "http://www.xbrl.org/2003/instance"
+XHTML = "http://www.w3.org/1999/xhtml"
 
 PROBE_ID_ATTR = "data-probe-id"
+
+# Each tagged fact is wrapped in an anchor pointing at this host. Chromium
+# preserves anchors as link annotations when it prints to PDF, and those
+# annotations carry the page number and the rectangle in PDF coordinate space.
+# That is how the geometry stage locates facts. Nothing ever resolves the URL.
+PROBE_URI = "https://probe.invalid"
+
+# Neutralise anchor styling so wrapping cannot shift the layout being measured.
+PROBE_STYLE = (
+    f'a[href^="{PROBE_URI}"] {{ color: inherit !important; '
+    "text-decoration: none !important; background: none !important; }"
+)
 
 
 def _decimal_separator(cleaned: str, fmt: str) -> str | None:
@@ -118,13 +131,43 @@ def _periods(tree) -> dict[str, str]:
     return periods
 
 
+def _wrap_in_anchor(element, probe_id: str) -> None:
+    """Wrap a tagged fact in an anchor so it survives into the PDF as a link.
+
+    The tail text belongs to the anchor once the element moves inside it,
+    otherwise the text following the number is duplicated or lost.
+    """
+    parent = element.getparent()
+    if parent is None:
+        return
+    position = list(parent).index(element)
+    anchor = etree.Element(f"{{{XHTML}}}a")
+    anchor.set("href", f"{PROBE_URI}/{probe_id}")
+    anchor.tail = element.tail
+    element.tail = None
+    parent.remove(element)
+    anchor.append(element)
+    parent.insert(position, anchor)
+
+
+def _inject_style(tree) -> None:
+    head = next(tree.iter(f"{{{XHTML}}}head"), None)
+    if head is None:
+        return
+    style = etree.SubElement(head, f"{{{XHTML}}}style")
+    style.set("type", "text/css")
+    style.text = PROBE_STYLE
+
+
 def extract(report: Path) -> list[dict]:
     parser = etree.XMLParser(recover=True, huge_tree=True)
     tree = etree.parse(str(report), parser)
     periods = _periods(tree)
 
     facts: list[dict] = []
-    for index, element in enumerate(tree.iter(f"{{{IX}}}nonFraction")):
+    # Materialise the list first: wrapping mutates the tree while iterating.
+    elements = list(tree.iter(f"{{{IX}}}nonFraction"))
+    for index, element in enumerate(elements):
         displayed = "".join(element.itertext()).strip()
         base = normalise_number(displayed, element.get("format") or "")
         if base is None:
@@ -135,8 +178,8 @@ def extract(report: Path) -> list[dict]:
         value = base * (Decimal(10) ** scale) * sign
 
         probe_id = f"f{index:06d}"
-        # Stamp an id so the geometry stage can find this exact element again.
         element.set(PROBE_ID_ATTR, probe_id)
+        _wrap_in_anchor(element, probe_id)
 
         context_ref = element.get("contextRef") or ""
         facts.append(
@@ -154,7 +197,8 @@ def extract(report: Path) -> list[dict]:
         )
 
     # Write the stamped copy: the geometry stage renders this, not the original,
-    # so browser boxes can be tied back to specific facts.
+    # so link annotations in the PDF can be tied back to specific facts.
+    _inject_style(tree)
     stamped = report.with_name("report.stamped.xhtml")
     tree.write(str(stamped), encoding="utf-8", method="xml")
     return facts
