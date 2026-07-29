@@ -17,6 +17,7 @@ import argparse
 import json
 from pathlib import Path
 
+from disclosure_rag.citation import select_numeric_spans
 from disclosure_rag.evaluation.metrics import (
     COVERAGE_THRESHOLD,
     Result,
@@ -28,13 +29,14 @@ from disclosure_rag.evaluation.stats import Delta, paired_bootstrap
 from disclosure_rag.ingest.blocks import extract_blocks
 from disclosure_rag.ingest.chunker import Chunk, chunk_blocks
 from disclosure_rag.labels.ledger import FactLedger
+from disclosure_rag.provenance import Span
 from disclosure_rag.retrieval.base import Retriever
 from disclosure_rag.retrieval.lexical import BM25Retriever
 
 
 def load(
     ledger_dir: Path, chunk_tokens: int = 600, overlap_tokens: int = 80
-) -> tuple[list[Chunk], list[Question]]:
+) -> tuple[list[Chunk], list[Question], dict[str, Path]]:
     """Ingest every document under a ledger directory and build the questions."""
     ledgers = [FactLedger.read(path) for path in sorted(ledger_dir.glob("*/ledger.json"))]
 
@@ -45,12 +47,14 @@ def load(
 
     chunks: list[Chunk] = []
     questions: list[Question] = []
+    pdf_for: dict[str, Path] = {}
     for ledger, path in zip(ledgers, sorted(ledger_dir.glob("*/ledger.json")), strict=True):
         document_pdf = path.parent / "document.pdf"
         if not document_pdf.exists():
             print(f"[eval] skipping {ledger.document_id}: no rendered document")
             continue
 
+        pdf_for[ledger.document_id] = document_pdf
         blocks = extract_blocks(document_pdf)
         document_chunks = chunk_blocks(
             ledger.document_id, blocks, target_tokens=chunk_tokens, overlap_tokens=overlap_tokens
@@ -66,21 +70,34 @@ def load(
             f"({pooled_count} from pooled labels)"
         )
 
-    return chunks, questions
+    return chunks, questions, pdf_for
 
 
 def run_retriever(
-    retriever: Retriever, chunks: list[Chunk], questions: list[Question], top_k: int = 10
+    retriever: Retriever,
+    chunks: list[Chunk],
+    questions: list[Question],
+    top_k: int = 10,
+    pdf_for: dict[str, Path] | None = None,
 ) -> dict[str, Result]:
     retriever.index(chunks)
     results: dict[str, Result] = {}
     for question in questions:
         # Scoped to the filing being asked about: see Retriever.search.
         hits = retriever.search(question.text, top_k=top_k, document_id=question.document_id)
+        # Narrow the top result to the figures it would outline for a reader.
+        # Without this the citation metric collapses onto rank-1 recall. See
+        # citation.py.
+        cited: list[Span] = []
+        if hits and pdf_for and question.document_id in pdf_for:
+            cited = select_numeric_spans(
+                pdf_for[question.document_id], hits[0].chunk, question.text
+            )
         results[question.question_id] = Result(
             question_id=question.question_id,
             stratum=question.stratum,
             retrieved_spans=[hit.chunk.spans for hit in hits],
+            cited_spans=cited,
         )
     return results
 
@@ -101,16 +118,16 @@ def per_question_hits(questions: list[Question], results: dict[str, Result], k: 
 def render_scores(name: str, scores: list[StratumScore]) -> str:
     lines = [
         f"\n{name}",
-        "| Stratum | n | recall@1 | recall@5 | recall@10 | coverage@1 "
-        "| shown first when found | tightness |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Stratum | n | recall@1 | recall@5 | recall@10 | shown first when found "
+        "| citation IoU@0.5 | mean citation IoU |",
+        "|---|---|---|---|---|---|---|",
     ]
     for score in scores:
         lines.append(
             f"| {score.stratum.value} | {score.questions} | "
             f"{score.recall_at_1:.3f} | {score.recall_at_5:.3f} | {score.recall_at_10:.3f} | "
-            f"{score.citation_coverage_at_1:.3f} | {score.shown_first_when_found:.3f} | "
-            f"{score.mean_tightness:.3f} |"
+            f"{score.shown_first_when_found:.3f} | {score.citation_iou_at_50:.3f} | "
+            f"{score.mean_citation_iou:.3f} |"
         )
     return "\n".join(lines)
 
@@ -147,7 +164,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
-    chunks, questions = load(args.ledgers, args.chunk_tokens, args.overlap_tokens)
+    chunks, questions, pdf_for = load(args.ledgers, args.chunk_tokens, args.overlap_tokens)
     if not chunks or not questions:
         print("[eval] nothing to evaluate")
         return 1
@@ -164,7 +181,7 @@ def main() -> int:
 
     for retriever in ladder:
         print(f"\n[eval] running {retriever.name}")
-        results = run_retriever(retriever, chunks, questions, top_k=args.top_k)
+        results = run_retriever(retriever, chunks, questions, args.top_k, pdf_for)
         scores = score_run(questions, results)
         runs.append((retriever.name, results, scores))
         print(render_scores(retriever.name, scores))

@@ -45,11 +45,14 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from disclosure_rag.evaluation.questions import Question, Stratum
-from disclosure_rag.provenance import Span, best_coverage
+from disclosure_rag.provenance import Span, best_coverage, best_iou
 
 # A citation counts as correct when it contains at least this much of the gold
 # region. Not 1.0, because a fact box can straddle a block boundary by a pixel.
 COVERAGE_THRESHOLD = 0.5
+
+# Predicted figure against tagged figure, both number-sized, so IoU is fair here.
+IOU_THRESHOLD = 0.5
 
 
 class Result(BaseModel):
@@ -61,7 +64,11 @@ class Result(BaseModel):
     stratum: Stratum
     retrieved_spans: list[list[Span]] = Field(
         default_factory=list,
-        description="Spans per retrieved chunk, best first",
+        description="Block-level spans per retrieved chunk, best first",
+    )
+    cited_spans: list[Span] = Field(
+        default_factory=list,
+        description="The figures the top result would actually outline for a reader",
     )
 
     def hit_rank(self, gold: list[Span], threshold: float = COVERAGE_THRESHOLD) -> int | None:
@@ -93,6 +100,20 @@ class Result(BaseModel):
                     best = max(best, span.tightness(target))
         return best
 
+    def citation_iou(self, gold: list[Span]) -> float:
+        """Overlap between the figure this would outline and the tagged figure.
+
+        This is the metric the project exists to report, and it only became
+        meaningful once citations were narrowed from a text block to a number.
+        Block against number gives an IoU near 0.015 even when perfectly correct,
+        so the threshold measured the size difference; number against number
+        makes the comparison fair. See citation.py.
+        """
+        return max(
+            (best_iou(span, gold) for span in self.cited_spans),
+            default=0.0,
+        )
+
 
 class StratumScore(BaseModel):
     """Scores for one stratum. Never combined across strata."""
@@ -112,8 +133,13 @@ class StratumScore(BaseModel):
     )
     mean_tightness: float = Field(
         default=0.0,
-        description="Share of the cited region that is the answer, where correct",
+        description="Share of the cited block that is the answer, where correct",
     )
+    citation_iou_at_50: float = Field(
+        default=0.0,
+        description="Share of questions whose cited figure overlaps the tagged figure by >= 0.5",
+    )
+    mean_citation_iou: float = 0.0
 
 
 def _recall_at(paired: list[tuple[Result, list[Span]]], k: int) -> float:
@@ -154,6 +180,7 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
             for result, gold in paired
             if result.top_coverage(gold) >= COVERAGE_THRESHOLD
         ]
+        citation_ious = [result.citation_iou(gold) for result, gold in paired]
         at_1, at_10 = _recall_at(paired, 1), _recall_at(paired, 10)
         scores.append(
             StratumScore(
@@ -166,6 +193,9 @@ def score_run(questions: list[Question], results: dict[str, Result]) -> list[Str
                 citation_coverage_at_1=sum(1 for value in coverages if value >= COVERAGE_THRESHOLD)
                 / len(coverages),
                 mean_tightness=sum(correct) / len(correct) if correct else 0.0,
+                citation_iou_at_50=sum(1 for value in citation_ious if value >= IOU_THRESHOLD)
+                / len(citation_ious),
+                mean_citation_iou=sum(citation_ious) / len(citation_ious),
             )
         )
 
