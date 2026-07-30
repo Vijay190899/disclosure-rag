@@ -1,14 +1,12 @@
 """Extract tagged facts from an Inline XBRL document.
 
-Promoted from the M0 probe, which extracted 865 facts across three Austrian
-filings with correct scale, sign and period handling. ADR-0008 records why this
-starts with lxml rather than Arelle, and what would change that.
+Reads ix:nonFraction attributes directly. ADR-0002 records why this uses lxml
+rather than Arelle, and what would change that.
 
 The number normalisation here is the most safety-critical code in the package.
 An error in it does not announce itself: it rescales labels by a factor of a
 thousand and every downstream measurement stays plausible while being wrong.
-The M0 probe caught exactly that bug in an earlier version, which is why the
-rules below are explicit and covered by tests.
+That failure mode is why the rules below are explicit and covered by tests.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ XHTML = "http://www.w3.org/1999/xhtml"
 # Each tagged fact is wrapped in an anchor pointing at this host before
 # rendering. Chromium preserves anchors as PDF link annotations carrying the
 # page and rectangle, which is how locate.py finds facts on the printed page.
-# The URL is never resolved. See ADR-0007.
+# The URL is never resolved. See ADR-0002.
 PROBE_URI = "https://label.invalid"
 
 # Neutralise anchor styling so wrapping cannot shift the layout being measured.
@@ -58,7 +56,7 @@ class FactSource(Protocol):
     """Reads tagged facts out of a filing.
 
     A protocol so the lxml reader can be swapped for Arelle without touching
-    anything downstream. ADR-0008.
+    anything downstream. ADR-0002.
     """
 
     def extract(self, report: Path, stamped_out: Path | None = None) -> list[Fact]:
@@ -131,7 +129,7 @@ def normalise_number(text: str, fmt: str = "") -> Decimal | None:
 
 
 class LxmlFactSource:
-    """Reads ``ix:nonFraction`` elements directly. See ADR-0008."""
+    """Reads ``ix:nonFraction`` elements directly. See ADR-0002."""
 
     def _units(self, tree: etree._ElementTree) -> dict[str, str]:
         """Map unit id to its measure, so a fact reports EUR rather than "u-1".

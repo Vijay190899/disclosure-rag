@@ -1,9 +1,9 @@
 """Read concept labels out of an XBRL label linkbase.
 
-The reason this exists is recorded in ADR-0009. Questions generated from XBRL
-concept names come out in English, the documents are German, and lexical
-retrieval has nothing to match on. The first baseline scored 0.000 for that
-reason alone.
+Concept names are English and these filings are German, so a question built from
+a concept name shares no vocabulary with the document it asks about. The label
+the issuer declared is what a reader would call the thing, and it is what both
+the router and the question generator use.
 
 An ESEF report package ships a label linkbase, usually named ``*_lab-de.xml``,
 which declares the issuer's German label for every concept the report uses,

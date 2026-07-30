@@ -207,12 +207,8 @@ dev = [
     { name = "ruff" },
 ]
 labels = [
-    { name = "playwright" },
-]
-spike = [
     { name = "httpx" },
     { name = "playwright" },
-    { name = "pymupdf" },
 ]
 
 [package.metadata]
@@ -220,24 +216,22 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", marker = "extra == 'dense'", specifier = ">=0.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'spike'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'labels'", specifier = ">=0.27" },
     { name = "lxml", specifier = ">=5.3" },
     { name = "lxml-stubs", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "playwright", marker = "extra == 'labels'", specifier = ">=1.48" },
-    { name = "playwright", marker = "extra == 'spike'", specifier = ">=1.48" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pymupdf", specifier = ">=1.24" },
-    { name = "pymupdf", marker = "extra == 'spike'", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "qdrant-client", specifier = ">=1.12" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
-provides-extras = ["dense", "dev", "labels", "spike"]
+provides-extras = ["dense", "dev", "labels"]
 
 [[package]]
 name = "distlib"

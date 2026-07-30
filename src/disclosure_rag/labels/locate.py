@@ -7,8 +7,8 @@ they cannot disagree with it.
 
 The obvious alternative does not work. Reading ``getBoundingClientRect()`` in
 the browser and deriving a page index from the vertical offset located 0 of 600
-facts in the M0 probe, because screen layout and print layout are different
-layouts and Chromium repaginates when printing. ADR-0007 has the numbers.
+facts, because screen layout and print layout are different layouts and
+Chromium repaginates when printing. ADR-0002 has the numbers.
 """
 
 from __future__ import annotations

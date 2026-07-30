@@ -115,7 +115,7 @@ def select_numeric_spans(
     Deliberately a simple, deterministic rule rather than a model: the words of
     the query that also appear in the chunk anchor a line, and the numbers on
     that line are the candidates. A financial statement row puts its label and
-    its values on one line, which the M2 run confirmed on real documents, so this
+    its values on one line, which holds on real filings, so this
     is the mechanism that row structure actually offers.
 
     Its limitation is the honest one to state: on a row carrying several periods
@@ -157,7 +157,7 @@ def select_numeric_spans(
 
         # With a period to match, use the column header to choose among the row's
         # figures. Without it the selector is guessing between several periods'
-        # values, which is what held citation accuracy at 5.8%. ADR-0011.
+        # values, which is why figure questions route to the structured layer instead. ADR-0001.
         if period_hint and len(figures) > 1:
             headers = [(text, span) for text, span in words if not looks_numeric(text)]
             wanted = {term for term in tokenize(period_hint) if any(c.isdigit() for c in term)}

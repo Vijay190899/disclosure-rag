@@ -7,12 +7,9 @@ sits. It supplies gold boxes for citation scoring and exact answers for numeric
 questions.
 
 The **prose pairs** are narrative sentences whose figure resolves to a tagged
-fact. They exist because the M0 probe measured a 38% resolution rate, which is
-too thin to build reconciliation on but ample to build an evaluation stratum
-from: a feature must work on most inputs, an evaluation set only has to be
-correct on the inputs it contains. Without them the benchmark would be built
-entirely from tagged primary-statement figures, which is the degenerate case
-ADR-0003 warned about and ADR-0008 exists to prevent.
+fact. They give the evaluation a stratum of questions phrased the way a reader
+would phrase them, rather than one built entirely from tagged primary-statement
+figures, which would be a much easier test than the real task.
 """
 
 from __future__ import annotations
@@ -248,9 +245,8 @@ def build(
 def write_review_csv(ledgers: list[FactLedger], path: Path) -> int:
     """Write prose-pair candidates for hand review.
 
-    The same discipline the M0 probe used: an automated pass narrows the field
-    and a person decides. Filling in the ``confirmed`` column is what turns a
-    candidate into a label.
+    An automated pass narrows the field and a person decides. Filling in the
+    ``confirmed`` column is what turns a candidate into a label.
     """
     import csv
 

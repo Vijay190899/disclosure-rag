@@ -1,19 +1,17 @@
-"""Dense retrieval, the second rung of the ablation ladder.
+"""Dense retrieval, available but not the default. See ADR-0005.
 
-Embeddings come from fastembed, which runs ONNX rather than torch. That keeps
-the install small enough that the evaluation stays reproducible on an ordinary
+Embeddings come from fastembed, which runs ONNX rather than torch. That keeps the
+install small enough that the evaluation stays reproducible on an ordinary
 machine, which matters more here than the last point of accuracy: a benchmark
 nobody can rerun is not much of a benchmark.
 
-The model is multilingual because the corpus is German. An English-only
-embedding model would measure its own language coverage rather than the value of
-dense retrieval, which is the same mistake ADR-0009 caught in the question
-generator.
+The model must be multilingual, because the corpus is German. An English-only
+model would measure its own language coverage rather than the value of dense
+retrieval.
 
 Vectors are held in memory as a single matrix and searched by cosine similarity.
-Qdrant is the right home for this once the corpus outgrows one machine, but at
-843 chunks a matrix multiply is faster than a network round trip and has no
-service to keep running.
+Qdrant is the right home once a corpus outgrows one machine; at a few thousand
+chunks a matrix multiply beats a network round trip and has no service to run.
 """
 
 from __future__ import annotations

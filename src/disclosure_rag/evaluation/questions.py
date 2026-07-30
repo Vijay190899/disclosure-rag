@@ -3,7 +3,7 @@
 Each question carries gold spans, so a run can be scored on *where* it pointed
 and not only on what it said.
 
-Strata are kept separate on purpose and are never pooled. ADR-0008 is explicit
+Strata are kept separate on purpose and are never pooled. ADR-0006 is explicit
 about why: the exact-figure stratum is the easy control, and averaging it with
 the hard cases would let good performance on lookups hide poor performance on
 everything else. That is the precise failure this project exists to detect, so
@@ -178,7 +178,7 @@ def questions_from_ledger(
         # question built from one has no vocabulary in common with the text it
         # is asking about. A concept with no declared label is skipped rather
         # than asked about in English, because that question is unanswerable by
-        # construction and would depress the score for no reason. ADR-0009.
+        # construction and would depress the score for no reason. ADR-0002.
         subject = ledger.concept_labels.get(fact.concept)
         label_source = "own"
         if not subject and pooled_labels:

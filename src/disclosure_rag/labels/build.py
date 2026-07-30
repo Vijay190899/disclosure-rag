@@ -50,7 +50,7 @@ def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None)
 
     # Label linkbases sit alongside the report inside the ESEF package. Without
     # them the question generator falls back to English concept names, which
-    # the documents do not contain. See ADR-0009.
+    # the documents do not contain. See ADR-0002.
     concept_labels = load_labels(report.parent)
     used = {fact.concept for fact in facts}
     matched = len(used & concept_labels.keys())

@@ -31,17 +31,12 @@ dev = [
 # disclosure_rag.labels.locate so the package stays importable without them.
 labels = [
     "playwright>=1.48",     # headless Chromium, print-to-PDF for the label plane only
+    "httpx>=0.27",          # fetching report packages
 ]
 # Dense retrieval. fastembed runs ONNX rather than torch, which keeps the install
 # small enough that the evaluation stays reproducible on an ordinary machine.
 dense = [
     "fastembed>=0.4",
-]
-# Throwaway probe dependencies. See spikes/esef_probe/README.md.
-spike = [
-    "playwright>=1.48",
-    "pymupdf>=1.24",
-    "httpx>=0.27",
 ]
 
 [build-system]
@@ -61,17 +56,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 
-[tool.ruff.lint.per-file-ignores]
-# Spikes are throwaway code answering a yes/no question. They are linted for
-# real errors but not held to the annotation standard of the package.
-"spikes/**" = ["ANN"]
-
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
-# Spikes are excluded deliberately: they are not part of the shipped package.
-exclude = ["^spikes/"]
 
 [[tool.mypy.overrides]]
 # Optional label-plane tools, imported lazily and absent from the base install.

@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test check run docker spike labels eval help
+.PHONY: install lint format typecheck test check run docker fetch labels eval help
 
 help:
 	@echo "install    - create venv and install deps with uv"
@@ -9,9 +9,9 @@ help:
 	@echo "check      - lint + typecheck + test (what CI runs)"
 	@echo "run        - start the FastAPI app on :8000"
 	@echo "docker     - build the container image"
+	@echo "fetch      - download ESEF report packages into data/filings"
 	@echo "labels     - build fact ledgers from data/filings"
 	@echo "eval       - run the retrieval baseline against the ledgers"
-	@echo "spike      - install spike extras and run the ESEF probe"
 
 install:
 	uv sync --extra dev
@@ -37,6 +37,10 @@ run:
 docker:
 	docker build -t disclosure-rag:local .
 
+fetch:
+	uv sync --extra dev --extra labels
+	uv run python -m disclosure_rag.labels.fetch --out data/filings --count 8
+
 labels:
 	uv sync --extra dev --extra labels
 	uv run playwright install chromium
@@ -46,8 +50,3 @@ labels:
 # `make eval` reproduces the README rather than something adjacent to it.
 eval:
 	uv run python -m disclosure_rag.evaluation.run --ledgers data/ledgers --chunk-tokens 600 --overlap-tokens 20 --out data/results.json
-
-spike:
-	uv sync --extra dev --extra spike
-	uv run playwright install chromium
-	uv run python -m spikes.esef_probe

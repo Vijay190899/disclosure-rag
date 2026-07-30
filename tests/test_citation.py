@@ -1,7 +1,7 @@
 """Tests for narrowing a citation to the figure inside a passage.
 
 Without this narrowing the citation metric collapses onto rank-1 recall and the
-label plane's precision is unused. ADR-0011.
+label plane's precision is unused. ADR-0003.
 """
 
 from disclosure_rag.citation import looks_numeric

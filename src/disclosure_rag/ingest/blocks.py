@@ -4,7 +4,7 @@ PyMuPDF returns blocks, lines and spans each with a rectangle. Block level is
 the right granularity here: it is roughly a paragraph or a table row, which is
 small enough to cite usefully and large enough to stay readable.
 
-ADR-0002 records why PyMuPDF rather than LlamaParse or ColPali. The short
+ADR-0004 records why PyMuPDF rather than LlamaParse or ColPali. The short
 version is that geometry comes out of the parser natively, and the same library
 renders a page with a region drawn on it, so the citation viewer shares a code
 path with the parser instead of reimplementing it.
@@ -34,7 +34,7 @@ def extract_blocks(pdf_path: Path) -> list[Block]:
 
     Reading order is PyMuPDF's, which is heuristic and will occasionally be
     wrong on multi-column pages. That is a known limitation rather than a
-    surprise: ADR-0002 accepts it, and the M2 failure taxonomy counts it.
+    surprise: ADR-0004 accepts it as a known limitation.
     """
     import fitz  # PyMuPDF, an ingest dependency
 

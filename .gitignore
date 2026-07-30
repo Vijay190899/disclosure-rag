@@ -37,11 +37,6 @@ models/
 # are committed so the chunker is testable offline, without network or keys.
 !tests/fixtures/**
 
-# Spike working directory. Downloaded filings and rendered pages are large and
-# reproducible from spikes/esef_probe, so they stay out of git. The findings in
-# spikes/esef_probe/REPORT.md are committed.
-spikes/esef_probe/work/
-
 # IDE / OS
 .idea/
 .vscode/

@@ -68,7 +68,7 @@ def test_concepts_without_a_declared_label_are_skipped() -> None:
 
     Skipping is right rather than falling back: an unanswerable question would
     depress the score for a reason that has nothing to do with retrieval.
-    ADR-0009.
+    ADR-0002.
     """
     ledger = ledger_with()
     ledger.concept_labels = {}
@@ -192,7 +192,7 @@ def test_periods_are_written_the_way_the_corpus_writes_them() -> None:
 
     The lexical tokenizer splits hyphens, so "2022-01-01 bis 2022-12-31" became
     six numeric tokens matching figures on nearly every table page. German
-    format survives tokenisation as one token per date. ADR-0011.
+    format survives tokenisation as one token per date.
     """
     assert describe_period("instant:2022-12-31") == "zum 31.12.2022"
     assert describe_period("2022-01-01/2022-12-31") == "im Geschäftsjahr 2022"
