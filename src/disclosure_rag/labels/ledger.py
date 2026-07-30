@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from disclosure_rag.labels.facts import Fact
 from disclosure_rag.labels.locate import Confirmation
 from disclosure_rag.provenance import Span
+from disclosure_rag.retrieval.lexical import tokenize
 
 NUMBER = re.compile(r"(?<![\w.,])-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?(?![\w])")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -58,16 +59,20 @@ class LocatedFact(BaseModel):
 
 
 class ProsePair(BaseModel):
-    """A candidate narrative restatement of a tagged fact.
+    """A narrative sentence that restates a tagged fact.
 
-    The gold span is the tagged fact's location. The system under test never
-    sees the tag, so answering still requires retrieval from the rendered page.
+    The gold span is the tagged fact's location. The system under test never sees
+    the tag, so answering still requires finding the figure in the rendered page.
 
-    **These are candidates, not labels.** Two failure modes survive the filters
-    and both need a human to catch them: layout blocks that are really table
-    rows but read as prose, and value matches that are coincidence rather than
-    restatement. On the Austrian corpus roughly half of the candidates inspected
-    were genuine. Only rows with ``confirmed`` set belong in an evaluation set.
+    **A candidate, not a label.** Only pairs with ``confirmed`` set are used in
+    the evaluation, and that flag is set by review.
+
+    ``names_concept`` records whether the sentence also contains the concept's
+    declared label. It sorts the review queue rather than gating it, because on
+    this corpus it cannot separate narrative from table rows: a statement row's
+    text *is* the concept label, so a row trivially names its own concept.
+    Measured on eight filings, the naming signal alone admitted 8 pairs of which
+    3 were genuine narrative and 4 were statement rows.
     """
 
     model_config = {"frozen": True}
@@ -80,9 +85,13 @@ class ProsePair(BaseModel):
     concept: str
     value: Decimal
     gold_span: Span
+    names_concept: bool = Field(
+        default=False,
+        description="The sentence also contains the concept's declared label. Sorts review.",
+    )
     confirmed: bool = Field(
         default=False,
-        description="Set by hand review. Unconfirmed pairs must not be used as labels.",
+        description="Set by review. Unconfirmed pairs are not used as labels.",
     )
 
 
@@ -158,12 +167,27 @@ def resolve_to_fact(value: Decimal, facts: list[Fact]) -> Fact | None:
     return None
 
 
+def names_concept(sentence: str, label: str) -> bool:
+    """True if a sentence contains enough of a concept's declared label.
+
+    A ranking signal for the review queue, not a gate. It cannot separate
+    narrative from a table row, because a statement row's text is the concept
+    label, so a row names its own concept by definition.
+    """
+    terms = [term for term in tokenize(label) if len(term) > 3]
+    if not terms:
+        return False
+    present = sum(1 for term in terms if term in set(tokenize(sentence)))
+    return present / len(terms) >= 0.7
+
+
 def extract_prose_pairs(
     document_id: str,
     page_blocks: list[list[str]],
     facts: list[Fact],
     located: dict[str, Span],
     tagged_displayed: set[str] | None = None,
+    concept_labels: dict[str, str] | None = None,
 ) -> list[ProsePair]:
     """Find narrative figures that resolve to a located tagged fact.
 
@@ -209,6 +233,9 @@ def extract_prose_pairs(
                         concept=by_id[fact.fact_id].concept,
                         value=fact.value,
                         gold_span=located[fact.fact_id],
+                        names_concept=names_concept(
+                            sentence, (concept_labels or {}).get(fact.concept, "")
+                        ),
                     )
                 )
     return pairs
@@ -231,7 +258,9 @@ def build(
     pairs: list[ProsePair] = []
     if page_blocks:
         tagged = {fact.displayed for fact in facts}
-        pairs = extract_prose_pairs(document_id, page_blocks, facts, located, tagged)
+        pairs = extract_prose_pairs(
+            document_id, page_blocks, facts, located, tagged, concept_labels
+        )
     return FactLedger(
         document_id=document_id,
         facts=rows,
@@ -243,17 +272,19 @@ def build(
 
 
 def write_review_csv(ledgers: list[FactLedger], path: Path) -> int:
-    """Write prose-pair candidates for hand review.
+    """Write the prose pairs out for inspection.
 
-    An automated pass narrows the field and a person decides. Filling in the
-    ``confirmed`` column is what turns a candidate into a label.
+    Candidates that also name their concept are listed first, since those are
+    the likeliest to be genuine. Filling in ``confirmed`` is what promotes a
+    candidate to a label.
     """
     import csv
 
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
-            "confirmed": "",  # y or n, filled in by hand
+            "confirmed": "",  # y or n, filled in during review
+            "names_concept": "y" if pair.names_concept else "n",
             "document_id": pair.document_id,
             "mention": pair.mention,
             "concept": pair.concept,
@@ -263,7 +294,7 @@ def write_review_csv(ledgers: list[FactLedger], path: Path) -> int:
             "sentence": pair.sentence,
         }
         for ledger in ledgers
-        for pair in ledger.prose_pairs
+        for pair in sorted(ledger.prose_pairs, key=lambda item: not item.names_concept)
     ]
     if not rows:
         return 0

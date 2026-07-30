@@ -24,7 +24,7 @@ def test_concept_names_become_readable() -> None:
     assert humanise_concept("ifrs-full:PropertyPlantAndEquipment") == "property plant and equipment"
 
 
-def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
+def ledger_with(prose_names_concept: bool | None = None) -> FactLedger:
     fact = Fact(
         fact_id="f1",
         concept="ifrs-full:Assets",
@@ -33,7 +33,7 @@ def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
         period="instant:2022-12-31",
     )
     pairs = []
-    if prose_confirmed is not None:
+    if prose_names_concept is not None:
         pairs = [
             ProsePair(
                 document_id="doc",
@@ -44,7 +44,7 @@ def ledger_with(prose_confirmed: bool | None = None) -> FactLedger:
                 concept="ifrs-full:Assets",
                 value=Decimal("5996400000"),
                 gold_span=GOLD,
-                confirmed=prose_confirmed,
+                confirmed=prose_names_concept,
             )
         ]
     return FactLedger(
@@ -75,14 +75,14 @@ def test_concepts_without_a_declared_label_are_skipped() -> None:
     assert questions_from_ledger(ledger) == []
 
 
-def test_unconfirmed_prose_pairs_are_not_used_as_questions() -> None:
-    """Roughly half the candidates are wrong, so unreviewed ones are noise."""
-    strata = {q.stratum for q in questions_from_ledger(ledger_with(prose_confirmed=False))}
+def test_an_unreviewed_pair_is_not_used_as_a_question() -> None:
+    """Mechanical extraction yields candidates; only reviewed pairs are labels."""
+    strata = {q.stratum for q in questions_from_ledger(ledger_with(prose_names_concept=False))}
     assert Stratum.NARRATIVE not in strata
 
 
-def test_confirmed_prose_pairs_become_narrative_questions() -> None:
-    strata = {q.stratum for q in questions_from_ledger(ledger_with(prose_confirmed=True))}
+def test_a_reviewed_pair_becomes_a_narrative_question() -> None:
+    strata = {q.stratum for q in questions_from_ledger(ledger_with(prose_names_concept=True))}
     assert Stratum.NARRATIVE in strata
 
 

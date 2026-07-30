@@ -79,7 +79,7 @@ class AnswerPipeline:
 
         if decision.route is Route.LEDGER:
             with self._timed(timings, "ledger"):
-                answer = self._from_ledger(question, ledger, decision.concept, decision.period)
+                answer = self._from_ledger(question, ledger, decision.concepts, decision.period)
             answer.timings_ms = timings
             return answer
 
@@ -110,7 +110,9 @@ class AnswerPipeline:
             timings_ms=timings,
         )
 
-    def _from_ledger(self, question: str, ledger: FactLedger, concept: str, period: str) -> Answer:
+    def _from_ledger(
+        self, question: str, ledger: FactLedger, concepts: tuple[str, ...], period: str
+    ) -> Answer:
         """Answer from the tagged facts.
 
         The citation is the tag's own location, so it is exact rather than
@@ -118,14 +120,45 @@ class AnswerPipeline:
         reporting never scores it as an estimate.
         """
         rows = [
-            row for row in ledger.facts if row.fact.concept == concept and row.fact.period == period
+            row
+            for row in ledger.facts
+            if row.fact.concept in concepts and row.fact.period == period
         ]
         if not rows:
             return Answer(
                 question=question,
                 status=Status.ABSTAINED,
                 route=Route.LEDGER,
-                reason=f"{concept} not tagged for {period}",
+                reason=f"{', '.join(concepts)} not tagged for {period}",
+            )
+
+        # A concept can be tagged several times for one period, dimensionally
+        # qualified: equity at a date is reported per component, revenue per
+        # segment. The question as asked does not say which, so answering with
+        # one of them is a confidently wrong answer, which is the failure this
+        # system exists to avoid. Measured at 7.1% of concept and period keys.
+        distinct = {str(row.fact.value) for row in rows}
+        if len(distinct) > 1:
+            return Answer(
+                question=question,
+                status=Status.ABSTAINED,
+                route=Route.LEDGER,
+                reason=(
+                    f"the question matches {len(distinct)} different tagged values for "
+                    f"{period}, so it does not identify one. A figure can be reported per "
+                    "segment or component, and one label can be declared for more than "
+                    "one concept."
+                ),
+                citations=[
+                    Citation(
+                        document_id=ledger.document_id,
+                        page=row.span.page,
+                        spans=[row.span],
+                        quote=row.fact.displayed,
+                        exact=True,
+                    )
+                    for row in rows[:5]
+                ],
             )
 
         fact = rows[0].fact

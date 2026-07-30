@@ -29,43 +29,54 @@ tags.
 
 Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
 
-**End to end**, 120 generated cases over three Austrian filings:
+**End to end**, 319 generated cases over eight Austrian filings:
 
 | Measure | n | Result |
 |---|---|---|
-| Routing accuracy, tagged figures | 60 | **0.983** |
-| Answer exact match, tagged figures | 60 | **0.950** |
-| Abstention recall, unanswerable questions | 60 | **1.000** |
-| Abstention precision | 60 | **1.000** |
-| False answer rate on unanswerable questions | 60 | **0.000** |
-| Wrong-period traps survived | 30 | **1.000** |
-| Latency p50 / p95 | 120 | **1.3 ms / 2.3 ms** |
+| Routing accuracy, tagged figures | 140 | **0.993** |
+| Answer exact match, tagged figures | 140 | **0.936** |
+| Abstention recall, unanswerable questions | 179 | **0.955** |
+| Abstention precision | 179 | **0.950** |
+| False answer rate on unanswerable questions | 179 | **0.045** |
+| Wrong-period traps survived | 70 | **1.000** |
+| Dimensional ambiguity detected | 39 | **1.000** |
+| Latency p50 / p95 | 319 | **0.4 ms / 2.4 ms** |
 
-Wrong-period traps ask for a real concept in a year the filing does not report. They separate knowing
-the concept from knowing the period, which is the distinction a plausible wrong answer hides. The
-system never returns a figure for one.
+Two of those rows are the ones worth reading.
 
-**Retrieval**, BM25 over 799 chunks, scored against bounding boxes taken from the filings' own tags:
+**Wrong-period traps** ask for a real concept in a year the filing does not report, separating
+knowing the concept from knowing the period. The system never returns a figure for one.
 
-| Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 |
-|---|---|---|---|---|
-| 0.350 | 0.567 | 0.692 | 0.449 | 0.506 |
+**Dimensional ambiguity** is the harder case. A concept can be tagged several times for one period,
+because equity is reported per component and revenue per segment, and separately because one German
+label can be declared for two different concepts: `Vorräte` is both the balance-sheet item and its
+cash-flow adjustment. In both cases the question does not identify a single figure, so the system
+declines and shows the candidates rather than picking one. It catches all 39.
 
-**Label quality**, the gold standard the above is measured against: 865 of 865 tagged facts located,
-median IoU 0.947 between the tag's location and an independent text search for the same figure.
+**Retrieval**, BM25 over 1829 chunks, scored against bounding boxes taken from the filings' own tags:
+
+| n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|---|
+| 320 | 0.278 | 0.553 | 0.678 | 0.396 | 0.462 |
+
+**Label quality**, the gold standard the above is measured against: 2418 of 2420 tagged facts
+located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
+for the same figure.
 
 ### Abstention is a chosen operating point, not a default
 
 | Threshold | Exact match on answerable | False answer rate on unanswerable |
 |---|---|---|
-| 0.50 | 0.950 | 0.517 |
-| 0.70 | 0.950 | 0.017 |
-| **0.80** | **0.950** | **0.000** |
+| 0.50 | 0.936 | 0.358 |
+| 0.70 | 0.936 | 0.084 |
+| **0.80** | **0.936** | **0.045** |
+| 0.90 | 0.936 | 0.028 |
 
-0.8 is the shipped setting. Exact match does not move because tagged figures come through the
-structured layer at full confidence, so a passage-path threshold cannot affect them. What it does
-cost is narrative recall, which this corpus has no gold set for, and that trade is deliberate: for a
-document a reader has to verify, an answer they cannot check is worth less than none.
+0.8 is the shipped setting. Exact match does not move across the sweep because tagged figures come
+through the structured layer at full confidence, so a passage-path threshold cannot affect them. What
+it does cost is narrative recall, which this corpus has no gold set for, and that trade is
+deliberate: for a document a reader has to verify, an answer they cannot check is worth less than
+none.
 
 ## How it works
 
@@ -74,7 +85,7 @@ flowchart LR
     Q["Question"] --> R{"Router"}
 
     R -->|"tagged concept<br/>+ period"| L["Fact ledger"]
-    R -->|"otherwise"| P["Hybrid retrieval"]
+    R -->|"otherwise"| P["Passage retrieval"]
 
     L --> LA["Exact value<br/>citation = the tag's own box"]
     P --> PA["Grounded answer<br/>with span citations"]
@@ -106,7 +117,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 159 tests.
+Docker, GitHub Actions, mypy strict, 164 tests.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -118,9 +129,10 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 159 tests
+make check                   # lint, typecheck, 164 tests
 
-make labels                  # build the fact ledgers from data/filings
+make fetch                   # download ESEF report packages into data/filings
+make labels                  # build the fact ledgers from them
 make eval                    # reproduce every number above
 DISCLOSURE_RAG_CORPUS=data/ledgers make run    # API on :8000
 ```
@@ -143,15 +155,20 @@ Every response carries per-stage timings and a request id, and logs are structur
 
 ## Limitations
 
-- **Three filings.** Enough for the benchmark to be meaningful, not enough to claim generality. The
-  corpus is Austrian, so German-language; ESEF is EU-wide so the mechanics are not country-specific.
-- **Retrieval quality is moderate.** Recall@10 of 0.692 on figure questions is a baseline, not a
+- **Eight filings.** Enough for the benchmark to be meaningful, not enough to claim generality. The
+  corpus is Austrian, so German-language; ESEF is EU-wide so the mechanics are not country-specific,
+  and the fetcher takes a country list.
+- **Retrieval quality is moderate.** Recall@10 of 0.678 on figure questions is a baseline, not a
   finished component. It matters less than it looks because those questions route to the structured
   layer, but it bounds the narrative path.
-- **The narrative path has no gold set.** Building one needs human-confirmed question and answer
-  pairs, so narrative answers are currently governed by abstention rather than measured.
+- **The narrative path is governed by abstention rather than measured.** A gold set for it needs
+  reviewed question and answer pairs. Mechanical extraction produces candidates but cannot promote
+  them: a statement row and a narrative sentence restating it contain the same label and the same
+  figure, so the available signals do not separate them. The build exports 495 ranked candidates for
+  review.
 - **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
   but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
+  Labels are pooled across the corpus to reduce this.
 
 ## Licence
 

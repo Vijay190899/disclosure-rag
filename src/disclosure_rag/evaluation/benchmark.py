@@ -19,6 +19,10 @@ verifiability has to know when to say nothing.
 **Wrong-period traps.** A tagged concept asked for a year it was not reported
 for. These separate "knows the concept" from "knows the period", which is the
 distinction a plausible wrong answer hides.
+
+**Ambiguous concepts.** A concept tagged several times for one period with
+different values, because it is reported per segment or component. The question
+does not identify which, so the system should abstain rather than pick one.
 """
 
 from __future__ import annotations
@@ -96,6 +100,11 @@ class BenchmarkReport(BaseModel):
         default=0.0,
         description="Share of wrong-period traps not answered with a figure",
     )
+    ambiguous_cases: int = 0
+    ambiguity_detected: float = Field(
+        default=0.0,
+        description="Share of dimensionally ambiguous questions declined rather than guessed",
+    )
 
     p50_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
@@ -117,17 +126,23 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
         if not labelled:
             continue
 
-        # Answerable: concept and period the filer tagged.
-        seen: set[tuple[str, str]] = set()
-        pool: list[tuple[str, str, str]] = []
+        # Group by concept and period so ambiguity is visible rather than hidden
+        # by taking the first value.
+        values: dict[tuple[str, str], set[str]] = {}
         for row in labelled:
-            key = (row.fact.concept, row.fact.period)
-            if key in seen:
-                continue
-            seen.add(key)
-            pool.append(
-                (ledger.concept_labels[row.fact.concept], row.fact.period, str(row.fact.value))
-            )
+            values.setdefault((row.fact.concept, row.fact.period), set()).add(str(row.fact.value))
+
+        # Answerable: tagged, and unambiguous for that period.
+        pool: list[tuple[str, str, str]] = []
+        ambiguous: list[tuple[str, str]] = []
+        for (concept, period), distinct in values.items():
+            label = ledger.concept_labels[concept]
+            if len(distinct) > 1:
+                ambiguous.append((label, period))
+            else:
+                pool.append((label, period, next(iter(distinct))))
+        if not pool:
+            continue
         for label, period, value in rng.sample(pool, min(per_document, len(pool))):
             cases.append(
                 Case(
@@ -152,6 +167,17 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
                     document_id=document_id,
                     expectation=Expectation.ABSTAIN,
                     note="wrong period",
+                )
+            )
+
+        # Ambiguous: tagged several times for the period with different values.
+        for label, period in rng.sample(ambiguous, min(per_document // 2, len(ambiguous))):
+            cases.append(
+                Case(
+                    question=f"Wie hoch war {label} {describe_period(period)}?".replace("  ", " "),
+                    document_id=document_id,
+                    expectation=Expectation.ABSTAIN,
+                    note="ambiguous concept",
                 )
             )
 
@@ -204,6 +230,7 @@ class Benchmark:
         ]
         abstainable = [o for o in self.outcomes if o.case.expectation is Expectation.ABSTAIN]
         traps = [o for o in abstainable if o.case.note == "wrong period"]
+        ambiguous = [o for o in abstainable if o.case.note == "ambiguous concept"]
 
         abstained = [o for o in self.outcomes if not o.answered]
         correct_abstentions = [o for o in abstained if o.case.expectation is Expectation.ABSTAIN]
@@ -227,6 +254,8 @@ class Benchmark:
             false_answer_rate=share(sum(1 for o in abstainable if o.answered), len(abstainable)),
             wrong_period_traps=len(traps),
             trap_survival=share(sum(1 for o in traps if o.value is None), len(traps)),
+            ambiguous_cases=len(ambiguous),
+            ambiguity_detected=share(sum(1 for o in ambiguous if not o.answered), len(ambiguous)),
             p50_latency_ms=round(statistics.median(latencies), 2),
             p95_latency_ms=round(latencies[min(int(len(latencies) * 0.95), len(latencies) - 1)], 2),
         )
@@ -292,6 +321,8 @@ def render_report(report: BenchmarkReport) -> str:
             f"| {report.false_answer_rate:.3f} |",
             f"| Wrong-period traps survived | {report.wrong_period_traps} "
             f"| {report.trap_survival:.3f} |",
+            f"| Dimensional ambiguity detected | {report.ambiguous_cases} "
+            f"| {report.ambiguity_detected:.3f} |",
             f"| Latency p50 / p95 (ms) | {report.cases} "
             f"| {report.p50_latency_ms:.2f} / {report.p95_latency_ms:.2f} |",
         ]

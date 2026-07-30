@@ -53,10 +53,15 @@ class ConceptIndex:
 @dataclass(frozen=True)
 class RoutingDecision:
     route: Route
-    concept: str = ""
+    concepts: tuple[str, ...] = ()
     period: str = ""
     label: str = ""
     reason: str = ""
+
+    @property
+    def concept(self) -> str:
+        """The single matched concept, or empty when the label is ambiguous."""
+        return self.concepts[0] if len(self.concepts) == 1 else ""
 
 
 def _periods_in(question: str) -> set[str]:
@@ -88,37 +93,48 @@ def route_question(question: str, index: ConceptIndex) -> RoutingDecision:
         return RoutingDecision(Route.PASSAGE, reason="empty question")
 
     # Longest matching label wins, so "Summe Zinsaufwendungen" beats "Summe".
-    best: tuple[int, str, str] | None = None
-    for concept, label in index.labels.items():
+    # All concepts tying at the best score are kept: a label can be declared for
+    # more than one concept, for example "Vorräte" for both the balance sheet
+    # item and its cash flow adjustment, and picking one of those arbitrarily is
+    # a confidently wrong answer.
+    best_score = 0
+    matches: list[tuple[str, str]] = []
+    for concept, label in sorted(index.labels.items()):
         label_terms = [term for term in tokenize(label) if len(term) > 2]
         if len(label_terms) < MIN_LABEL_TOKENS:
             continue
         present = sum(1 for term in label_terms if term in question_terms)
         if present / len(label_terms) < MIN_LABEL_COVERAGE:
             continue
-        if best is None or present > best[0]:
-            best = (present, concept, label)
+        if present > best_score:
+            best_score, matches = present, [(concept, label)]
+        elif present == best_score:
+            matches.append((concept, label))
 
-    if best is None:
+    if not matches:
         return RoutingDecision(Route.PASSAGE, reason="no tagged concept named")
 
-    _, concept, label = best
+    concepts = tuple(concept for concept, _ in matches)
+    label = matches[0][1]
     wanted = _periods_in(question)
     if not wanted:
         return RoutingDecision(
             Route.PASSAGE,
-            concept=concept,
+            concepts=concepts,
             label=label,
             reason="concept named but no period, which is ambiguous across years",
         )
 
-    period = _match_period(wanted, index.periods.get(concept, set()))
+    available: set[str] = set()
+    for concept in concepts:
+        available |= index.periods.get(concept, set())
+    period = _match_period(wanted, available)
     if not period:
         return RoutingDecision(
             Route.PASSAGE,
-            concept=concept,
+            concepts=concepts,
             label=label,
             reason="concept named but not tagged for the requested period",
         )
 
-    return RoutingDecision(Route.LEDGER, concept=concept, period=period, label=label)
+    return RoutingDecision(Route.LEDGER, concepts=concepts, period=period, label=label)

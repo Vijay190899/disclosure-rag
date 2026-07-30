@@ -10,6 +10,7 @@ from disclosure_rag.labels.ledger import (
     extract_prose_pairs,
     is_prose,
     is_specific,
+    names_concept,
     resolve_to_fact,
     sentence_around,
 )
@@ -151,3 +152,48 @@ def test_ledger_round_trips_through_disk(tmp_path: Path) -> None:
     assert restored.document_id == "doc"
     assert restored.spans_for("f000000") == [Span(page=7, x0=0.1, y0=0.1, x1=0.2, y1=0.2)]
     assert restored.facts[0].fact.value == Decimal("1204000")
+
+
+def test_a_sentence_naming_the_concept_passes_the_precision_gate() -> None:
+    """Value agreement alone is coincidence-prone; naming the concept is evidence."""
+    assert names_concept(
+        "Die Bilanzsumme des Konzerns belief sich zum Jahresende auf EUR 5.996,4 Mio.",
+        "Bilanzsumme",
+    )
+
+
+def test_a_multi_word_label_needs_most_of_its_words() -> None:
+    label = "Zinserträge unter Anwendung der Effektivzinsmethode"
+    assert names_concept(f"Die {label} betrugen 192,9 Mio EUR im Berichtsjahr.", label)
+    assert not names_concept("Die Zinserträge betrugen 192,9 Mio EUR im Berichtsjahr.", label)
+
+
+def test_an_unrelated_sentence_fails_the_gate() -> None:
+    assert not names_concept(
+        "Die Anzahl der Mitarbeiter stieg im Berichtsjahr auf 1.204 Personen.", "Bilanzsumme"
+    )
+
+
+def test_a_concept_with_no_label_fails_the_gate() -> None:
+    assert not names_concept("Ein beliebiger Satz mit einer Zahl 1.204 darin.", "")
+
+
+def test_prose_pairs_record_whether_they_named_the_concept() -> None:
+    facts = LxmlFactSource().extract(FIXTURE)
+    assets = next(item for item in facts if item.concept == "ifrs-full:Assets")
+    gold = Span(page=4, x0=0.1, y0=0.2, x1=0.3, y1=0.25)
+    blocks = [
+        [
+            "Die Gesamtaktiva der Gruppe beliefen sich zum Jahresende 2022 auf rund "
+            "EUR 5.996,4 Mio und lagen damit deutlich ueber dem Niveau des Vorjahres."
+        ]
+    ]
+    pairs = extract_prose_pairs(
+        "doc",
+        blocks,
+        facts,
+        {assets.fact_id: gold},
+        None,
+        {"ifrs-full:Assets": "Gesamtaktiva"},
+    )
+    assert pairs and pairs[0].names_concept is True

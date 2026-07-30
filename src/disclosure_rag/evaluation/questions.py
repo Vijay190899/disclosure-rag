@@ -136,11 +136,11 @@ def questions_from_ledger(
     retrieval should beat lexical matching. Questions record which source they
     came from so the two can be reported separately rather than confounded.
 
-    The narrative stratum is drawn only from prose pairs marked ``confirmed``.
-    Unconfirmed pairs are candidates, and roughly half of them are wrong, so
-    using them unreviewed would put noise into the answer key. If none are
-    confirmed the stratum is simply empty, and the report says so rather than
-    quietly reporting a pooled number.
+    The narrative stratum is drawn only from reviewed prose pairs. Mechanical
+    extraction produces candidates, not labels: on this corpus the available
+    signals cannot separate a narrative restatement from the statement row it
+    restates, so unreviewed pairs would put noise into the answer key. If none
+    are reviewed the stratum is empty and the report says so.
     """
     questions: list[Question] = []
 
