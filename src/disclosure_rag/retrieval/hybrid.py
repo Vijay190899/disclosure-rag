@@ -43,7 +43,15 @@ class HybridRetriever:
         self.name = "hybrid(" + "+".join(r.name for r in retrievers) + ")"
 
     def index(self, chunks: list[Chunk]) -> None:
+        """Index each member, skipping any that already hold these chunks.
+
+        A member can be shared with an earlier rung of an ablation ladder, and
+        re-indexing it would re-embed the whole corpus for no gain.
+        """
         for retriever in self.retrievers:
+            existing = getattr(retriever, "_chunks", None)
+            if existing is not None and len(existing) == len(chunks):
+                continue
             retriever.index(chunks)
 
     def search(

@@ -152,9 +152,12 @@ def build_ladder(dense_model: str | None) -> list[Retriever]:
         from disclosure_rag.retrieval.dense import DenseRetriever
         from disclosure_rag.retrieval.hybrid import HybridRetriever
 
+        # One dense instance, shared with the hybrid rung. Constructing a second
+        # embeds the whole corpus twice, which on a large multilingual model is
+        # the difference between minutes and most of an hour.
         dense = DenseRetriever(dense_model)
         ladder.append(dense)
-        ladder.append(HybridRetriever([BM25Retriever(), DenseRetriever(dense_model)]))
+        ladder.append(HybridRetriever([BM25Retriever(), dense]))
     return ladder
 
 
