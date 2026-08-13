@@ -42,6 +42,17 @@ MODEL_WINDOWS = {
 }
 DEFAULT_WINDOW = 512
 
+# The e5 family is trained with asymmetric prefixes and degrades measurably
+# without them: passages are embedded as "passage: ..." and queries as
+# "query: ...". Omitting them is a silent misuse that looks like the model
+# simply performing badly, so the prefixes are part of the model's definition
+# here rather than a caller's responsibility.
+MODEL_PREFIXES = {
+    "intfloat/multilingual-e5-large": ("query: ", "passage: "),
+    "intfloat/multilingual-e5-base": ("query: ", "passage: "),
+    "intfloat/multilingual-e5-small": ("query: ", "passage: "),
+}
+
 
 class ChunkTooLongForModel(RuntimeError):
     """Raised when chunks exceed what the embedding model can read.
@@ -61,6 +72,7 @@ class DenseRetriever:
         self.model_name = model_name
         self.name = f"dense:{model_name.rsplit('/', 1)[-1]}"
         self.window = MODEL_WINDOWS.get(model_name, DEFAULT_WINDOW)
+        self.query_prefix, self.passage_prefix = MODEL_PREFIXES.get(model_name, ("", ""))
         self.strict_window = strict_window
         self._chunks: list[Chunk] = []
         self._matrix: Any = None
@@ -119,7 +131,11 @@ class DenseRetriever:
     def index(self, chunks: list[Chunk]) -> None:
         self._check_window(chunks)
         self._chunks = list(chunks)
-        self._matrix = self._encode([chunk.text for chunk in self._chunks]) if chunks else None
+        self._matrix = (
+            self._encode([self.passage_prefix + chunk.text for chunk in self._chunks])
+            if chunks
+            else None
+        )
 
     def search(
         self, query: str, top_k: int = 10, document_id: str | None = None
@@ -128,7 +144,7 @@ class DenseRetriever:
             return []
         import numpy as np
 
-        scores = self._matrix @ self._encode([query])[0]
+        scores = self._matrix @ self._encode([self.query_prefix + query])[0]
         if document_id is not None:
             mask = np.array(
                 [chunk.document_id == document_id for chunk in self._chunks], dtype=bool
