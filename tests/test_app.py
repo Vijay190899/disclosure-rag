@@ -1,5 +1,8 @@
 """Tests for the HTTP surface."""
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from disclosure_rag import __version__
@@ -42,3 +45,22 @@ def test_every_response_carries_a_request_id() -> None:
     with TestClient(app) as client:
         response = client.get("/health")
     assert response.headers.get("x-request-id")
+
+
+def test_a_missing_corpus_path_fails_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configured but unusable must not boot into a healthy, empty service.
+
+    A service that reports healthy while abstaining on every question looks
+    correct on a dashboard and is useless, which is the worse failure.
+    """
+    monkeypatch.setenv("DISCLOSURE_RAG_CORPUS", "/nonexistent/corpus")
+    with pytest.raises(RuntimeError, match="does not exist"), TestClient(app):
+        pass
+
+
+def test_an_empty_corpus_directory_fails_the_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DISCLOSURE_RAG_CORPUS", str(tmp_path))
+    with pytest.raises(RuntimeError, match="no usable documents"), TestClient(app):
+        pass

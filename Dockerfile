@@ -1,17 +1,27 @@
 FROM python:3.12-slim
 
-# Pin the uv image by version rather than :latest so the build is repeatable.
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+# Pinned, and pinned to the version that wrote uv.lock. An older uv cannot parse
+# a newer lockfile, so this pin and the lockfile have to move together.
+COPY --from=ghcr.io/astral-sh/uv:0.12.0 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Dependency manifests first, so an edit to src does not invalidate the
-# dependency layer. Source is copied after the install for that reason.
-COPY pyproject.toml README.md ./
-COPY src/disclosure_rag/__init__.py ./src/disclosure_rag/__init__.py
-RUN uv sync --no-editable --no-dev
+# Two syncs, so an edit to src does not invalidate the dependency layer.
+#
+# --no-install-project installs dependencies only. The project itself is
+# installed by the second sync, after the full source is present. Doing it in
+# one step and copying only __init__.py to keep the cache warm does build, and
+# then produces an image whose installed package contains nothing but that one
+# file, which fails at import with no clue why.
+#
+# --frozen makes the build fail rather than silently resolve a dependency set
+# different from the one CI tested. LICENSE is copied because pyproject declares
+# it as the licence file and the build backend reads it.
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
+RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

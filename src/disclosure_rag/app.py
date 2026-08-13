@@ -69,16 +69,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
 
     directory = os.environ.get(CORPUS_ENV)
-    if directory and Path(directory).exists():
-        corpus = load_corpus(Path(directory))
-        logger.info(
-            "corpus loaded: %d documents, %d chunks", len(corpus.ledgers), len(corpus.chunks)
-        )
-    else:
+    if not directory:
+        # Deliberately empty: the image ships no data, so this is the normal
+        # state for a container started without a mounted corpus.
         corpus = Corpus.empty()
         logger.warning(
-            "no corpus loaded. Set %s to a ledger directory built by disclosure_rag.labels.build",
+            "no corpus configured. Set %s to a ledger directory built by "
+            "disclosure_rag.labels.build",
             CORPUS_ENV,
+        )
+    else:
+        # Configured but unusable is a misconfiguration, and it fails the start
+        # rather than serving an empty index. A service that reports healthy
+        # while answering nothing is worse than one that refuses to boot: the
+        # first looks fine on a dashboard and abstains on every question.
+        path = Path(directory)
+        if not path.exists():
+            raise RuntimeError(f"{CORPUS_ENV} is set to {directory!r}, which does not exist")
+        corpus = load_corpus(path)
+        if not corpus.ledgers:
+            raise RuntimeError(
+                f"{CORPUS_ENV} is set to {directory!r} but it holds no usable documents. "
+                "Each document needs both ledger.json and document.pdf."
+            )
+        logger.info(
+            "corpus loaded: %d documents, %d chunks", len(corpus.ledgers), len(corpus.chunks)
         )
 
     app.state.corpus = corpus
