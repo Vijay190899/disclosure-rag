@@ -55,9 +55,19 @@ declines and shows the candidates rather than picking one. It catches all 39.
 
 **Retrieval**, BM25 over 1829 chunks, scored against bounding boxes taken from the filings' own tags:
 
-| n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 |
-|---|---|---|---|---|---|
-| 320 | 0.278 | 0.553 | 0.678 | 0.396 | 0.462 |
+| n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | Citation IoU@0.5 |
+|---|---|---|---|---|---|---|
+| 320 | 0.278 | 0.553 | 0.678 | 0.396 | 0.462 | **0.056** |
+
+That last column is deliberately shown rather than omitted, because it is the worst number here and
+it is the one that explains the architecture. It asks whether the single figure the system would
+outline is the right one, when the answer is reached by retrieval instead of by lookup. At 0.056 it
+mostly is not: retrieval finds the right passage, then cannot tell which of the row's figures belongs
+to the year asked about, because the column header that distinguishes them is in a different text
+block and is gone once the page is linearised.
+
+That is the measurement behind routing tagged figures to the structured layer, where the same
+question is answered exactly and the citation is the filer's own tag.
 
 **Label quality**, the gold standard the above is measured against: 2418 of 2420 tagged facts
 located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
