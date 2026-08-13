@@ -69,6 +69,20 @@ block and is gone once the page is linearised.
 That is the measurement behind routing tagged figures to the structured layer, where the same
 question is answered exactly and the citation is the filer's own tag.
 
+**The retrieval ladder**, same questions, at the 200-token chunk size a 512-token embedder requires:
+
+| Retriever | Recall@5 | MRR@10 | nDCG@10 |
+|---|---|---|---|
+| **BM25** | **0.478** | **0.352** | **0.401** |
+| dense, multilingual-e5-large | 0.159 | 0.089 | 0.122 |
+| hybrid, reciprocal rank fusion | 0.303 | 0.203 | 0.268 |
+
+Hybrid retrieval, the obvious choice, loses to plain BM25 by a paired-bootstrap margin of
+**-0.319 [-0.378, -0.259]** on the dense step. A question here names a concept by the label the filer
+declared, and that label appears verbatim in the row being looked for, so there is no vocabulary gap
+for embeddings to bridge and fusing a weaker retriever in only costs ranking positions. BM25 is the
+default. [ADR-0005](docs/adr/0005-bm25-default-no-agent-framework.md).
+
 **Label quality**, the gold standard the above is measured against: 2418 of 2420 tagged facts
 located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
 for the same figure.

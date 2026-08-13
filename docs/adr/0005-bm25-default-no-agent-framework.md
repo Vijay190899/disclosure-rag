@@ -13,29 +13,40 @@ The intuition that hybrid retrieval beats either half is well founded in general
 hold here: financial documents are full of exact figures and identifiers that embeddings
 under-retrieve, so fusing lexical and dense results should win.
 
-Measured on 120 questions, retrieval scoped to the filing being asked about:
+Measured on eight filings, 320 questions, retrieval scoped to the filing being asked about, with
+`intfloat/multilingual-e5-large` and its required `query:` and `passage:` prefixes:
 
-| Retriever | Recall@5 |
-|---|---|
-| BM25 | **0.233** |
-| Dense, multilingual MiniLM | 0.042 |
-| Hybrid, reciprocal rank fusion | 0.183 |
+| Retriever | Recall@5 | MRR@10 | nDCG@10 |
+|---|---|---|---|
+| **BM25** | **0.478** | **0.352** | **0.401** |
+| dense, multilingual-e5-large | 0.159 | 0.089 | 0.122 |
+| hybrid, reciprocal rank fusion | 0.303 | 0.203 | 0.268 |
 
-Paired bootstrap 95% interval on the delta: BM25 to dense **-0.192 [-0.275, -0.117]**.
+Paired bootstrap 95% interval on the delta: BM25 to dense **-0.319 [-0.378, -0.259]** over 320
+questions with 124 disagreeing. Dense to hybrid recovers **+0.144 [+0.097, +0.191]**, which still
+leaves hybrid well below BM25.
 
-**Hybrid loses to plain BM25.** The reason is the mechanism working against the conclusion. Where a
-question uses the document's own wording there is no vocabulary gap for embeddings to bridge, lexical
-matching wins outright, and fusing a weaker retriever in costs ranking positions rather than adding
-recall.
+**Hybrid loses to plain BM25, and not narrowly.** The mechanism is the reason: a question here names
+the concept by the label the filer declared, and that label appears verbatim in the row being looked
+for. There is no vocabulary gap for embeddings to bridge, so fusing a weaker retriever in only costs
+ranking positions.
 
-**Decision: BM25 is the default.** Dense and hybrid retrieval stay in the codebase behind the
-`Retriever` protocol, configurable and currently without a measured justification, which is a weaker
-claim than the one I started with.
+**The dense path also imposes a cost on everything else.** e5-large reads 512 subword tokens, and at
+a 600-token chunk budget 1618 of 1829 chunks exceed that and would be silently truncated. The whole
+ladder therefore runs at 200 tokens, where every chunk fits. Smaller chunks cost recall: BM25 scores
+Recall@5 of 0.553 at 600 tokens against 0.478 at 200. So adopting dense retrieval would mean giving
+up recall across the system to accommodate the component that performs worst.
 
-**Revisit** with a longer-context multilingual embedder. The dense row above was measured with a
-128-token window against chunks that had to be shrunk to fit it, and shrinking chunks to satisfy the
-embedder cost Recall@1 nearly two thirds. A 512-token or larger model removes that constraint rather
-than paying for it, and it is a different experiment from this one.
+**Decision: BM25 is the default.** Dense and hybrid stay behind the `Retriever` protocol,
+configurable, with no measured justification.
+
+**What would change this** is a question set with genuine vocabulary mismatch, where a reader phrases
+something differently from the document, not a larger model. The conclusion above is scoped to
+questions that name a concept by its declared label, which is what the current benchmark contains.
+That is the narrative stratum, and it does not exist yet.
+
+> An earlier version of this record reached the same conclusion from a weaker measurement: three
+> filings, a 128-token model, and a chunk size chosen to fit it. The numbers above replace it.
 
 ## Orchestration: no agent framework, no MCP server
 
