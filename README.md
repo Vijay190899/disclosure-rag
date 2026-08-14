@@ -215,6 +215,21 @@ make eval                    # reproduce every number above
 DISCLOSURE_RAG_CORPUS=data/ledgers make run    # API and viewer on :8000
 ```
 
+Every target is a one-line wrapper, so `make` is a convenience rather than a dependency. Without it,
+on Windows or anywhere else:
+
+```powershell
+uv sync --extra dev
+uv run pytest
+uv run python -m disclosure_rag.evaluation.run --ledgers data/ledgers `
+    --chunk-tokens 600 --overlap-tokens 20 --out data/results.json
+$env:DISCLOSURE_RAG_CORPUS = "data/ledgers"; uv run uvicorn disclosure_rag.app:app --port 8000
+```
+
+Or, with the environment already created, `.venv\Scripts\python.exe -m ...` and no `uv` at all.
+Rebuilding the ledgers is the one step that needs more: `uv sync --extra labels` and a
+`playwright install chromium`, because it renders each filing with headless Chromium.
+
 Open `localhost:8000` for the viewer: pick a filing, ask, and the cited region is drawn on the page.
 Each filing offers a few example questions, and those are verified at startup by asking them, so an
 example that would abstain is never shown. The viewer is one file with no build step and no external
