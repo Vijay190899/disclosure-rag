@@ -195,6 +195,19 @@ def render(pair: ProsePair, index: int, total: int, label: str) -> str:
     )
 
 
+def identity(pair: ProsePair) -> tuple[str, str, int, str]:
+    """What makes a candidate the one the reviewer just looked at.
+
+    The obvious key, fact id plus the figure as written, is not unique. One
+    tagged fact can be restated in several places, so confirming a sentence on
+    page 25 also marked a different sentence on page 103 that happened to quote
+    the same figure. A reviewer cannot see that happen, which is what makes it
+    worth a wide key: two candidates identical in all four fields really are the
+    same judgement.
+    """
+    return (pair.fact_id, pair.mention, pair.page, pair.sentence)
+
+
 class Session(NamedTuple):
     confirmed: int
     reviewed: int
@@ -220,7 +233,7 @@ def review_ledger(
     if not queue:
         return Session(0, 0, stop=False)
 
-    decisions: dict[str, bool] = {}
+    decisions: dict[tuple[str, str, int, str], bool] = {}
     confirmed = 0
     stop = False
     for position, pair in enumerate(queue, start=1):
@@ -243,14 +256,12 @@ def review_ledger(
             break
         if choice == "s":
             continue
-        decisions[pair.fact_id + pair.mention] = choice == "y"
+        decisions[identity(pair)] = choice == "y"
         confirmed += choice == "y"
 
     if decisions:
         ledger.prose_pairs = [
-            pair.model_copy(update={"confirmed": True})
-            if decisions.get(pair.fact_id + pair.mention)
-            else pair
+            pair.model_copy(update={"confirmed": True}) if decisions.get(identity(pair)) else pair
             for pair in ledger.prose_pairs
         ]
         ledger.write(path)
@@ -294,7 +305,9 @@ def main() -> int:
 
     print(
         f"\nconfirmed {total_confirmed} of {total_reviewed} reviewed, saved to the ledgers. "
-        "Run `make eval` to pick up the narrative stratum."
+        "Re-run the evaluation to pick up the narrative stratum:\n"
+        "  python -m disclosure_rag.evaluation.run --ledgers data/ledgers "
+        "--chunk-tokens 600 --overlap-tokens 20 --out data/results.json"
     )
     return 0
 

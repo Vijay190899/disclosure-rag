@@ -236,3 +236,39 @@ def test_the_filings_own_label_wins_over_a_borrowed_one() -> None:
     )
     ledger = FactLedger(document_id="doc", concept_labels={"ifrs-full:Assets": "Bilanzsumme"})
     assert wording(pair, ledger, {"ifrs-full:Assets": {"Summe Aktiva"}}) == "Bilanzsumme"
+
+
+def test_confirming_one_sentence_does_not_confirm_another(tmp_path: Path) -> None:
+    """One tagged fact can be restated in several places.
+
+    Keyed on fact id and the figure as written, confirming the sentence on one
+    page silently confirmed a different sentence on another that quoted the same
+    number. A reviewer cannot see that happen, so the key has to be wide enough
+    that they never have to.
+    """
+    from disclosure_rag.labels.review import identity
+
+    span = Span(page=1, x0=0.1, y0=0.1, x1=0.2, y1=0.2)
+
+    def pair(sentence: str, page: int) -> ProsePair:
+        return ProsePair(
+            document_id="doc",
+            sentence=sentence,
+            mention="-1.275",
+            page=page,
+            fact_id="f1",
+            concept="ifrs-full:CashFlows",
+            value=Decimal("-1275000"),
+            gold_span=span,
+        )
+
+    reviewed = pair("Aus der Geldflussrechnung resultiert ...", 25)
+    elsewhere = pair("TEUR 1.863 wirkten ebenfalls auf ...", 103)
+    assert identity(reviewed) != identity(elsewhere)
+
+    decisions = {identity(reviewed): True}
+    updated = [
+        item.model_copy(update={"confirmed": True}) if decisions.get(identity(item)) else item
+        for item in (reviewed, elsewhere)
+    ]
+    assert [item.confirmed for item in updated] == [True, False]
