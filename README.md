@@ -43,7 +43,7 @@ Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
 | Dimensional ambiguity detected | 73 | **1.000** |
 | Latency p50 / p95 | 393 | **0.7 ms / 3.2 ms** |
 
-Two of those rows are the ones worth reading.
+Two of those rows are the ones worth reading, and one of them was earned the hard way.
 
 **Wrong-period traps** ask for a real concept in a year the filing does not report, separating
 knowing the concept from knowing the period. The system never returns a figure for one.
