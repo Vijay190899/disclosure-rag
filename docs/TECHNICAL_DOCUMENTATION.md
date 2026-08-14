@@ -169,8 +169,10 @@ not score exact citations as estimates. [ADR-0003](adr/0003-provenance-is-a-list
 outlined. The wire format is exactly what a citation returns, so a client hands one straight to the
 other.
 
-`GET /documents` lists the corpus. `GET /health` reports liveness, version, document count and the
-snapshot in force. `GET /metrics` exposes Prometheus counters.
+`GET /documents` lists the corpus, each entry carrying example questions that were verified at
+startup by asking them, so an example that would abstain is never offered. `GET /` serves a viewer
+built on those three endpoints and nothing else. `GET /health` reports liveness, version, document
+count and the snapshot in force. `GET /metrics` exposes Prometheus counters.
 
 `GET /snapshot` returns the corpus version answers are currently produced against: every document's
 content hash plus the index settings. `GET /audit/{id}` returns a recorded answer and

@@ -37,8 +37,8 @@ from pydantic import BaseModel, Field
 from disclosure_rag.answer.models import Route, Status
 from disclosure_rag.answer.pipeline import AnswerPipeline
 from disclosure_rag.evaluation.calibration import Calibration, calibrate
-from disclosure_rag.evaluation.questions import describe_period
 from disclosure_rag.labels.ledger import FactLedger
+from disclosure_rag.periods import phrase_question
 
 SEED = 20260730
 
@@ -149,7 +149,7 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
         for label, period, value in rng.sample(pool, min(per_document, len(pool))):
             cases.append(
                 Case(
-                    question=f"Wie hoch war {label} {describe_period(period)}?".replace("  ", " "),
+                    question=phrase_question(label, period),
                     document_id=document_id,
                     expectation=Expectation.ANSWER_FROM_LEDGER,
                     expected_value=value,
@@ -177,7 +177,7 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
         for label, period in rng.sample(ambiguous, min(per_document // 2, len(ambiguous))):
             cases.append(
                 Case(
-                    question=f"Wie hoch war {label} {describe_period(period)}?".replace("  ", " "),
+                    question=phrase_question(label, period),
                     document_id=document_id,
                     expectation=Expectation.ABSTAIN,
                     note="ambiguous concept",

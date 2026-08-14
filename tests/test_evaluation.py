@@ -6,12 +6,12 @@ from disclosure_rag.evaluation.metrics import Result, score_run
 from disclosure_rag.evaluation.questions import (
     Question,
     Stratum,
-    describe_period,
     humanise_concept,
     questions_from_ledger,
 )
 from disclosure_rag.labels.facts import Fact
 from disclosure_rag.labels.ledger import FactLedger, LocatedFact, ProsePair
+from disclosure_rag.periods import describe_period
 from disclosure_rag.provenance import Span
 
 GOLD = Span(page=2, x0=0.10, y0=0.10, x1=0.30, y1=0.20)

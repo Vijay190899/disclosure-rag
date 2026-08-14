@@ -1,9 +1,10 @@
 """FastAPI application.
 
-Three endpoints. ``/query`` answers a question and returns the regions to
-outline. ``/page`` renders one of those regions onto the document page, which is
-what makes a citation verifiable in one click rather than in principle.
-``/health`` reports liveness.
+``/query`` answers a question and returns the regions to outline. ``/page``
+renders one of those regions onto the document page, which is what makes a
+citation verifiable in one click rather than in principle. ``/`` serves a viewer
+that puts the two together. ``/snapshot`` and ``/audit`` cover reproducing an
+answer later, and ``/health`` and ``/metrics`` cover operating it.
 
 The corpus is loaded once at startup and held in memory. At this size that is
 the right call: the index is a few thousand chunks, so a network hop to a vector
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from disclosure_rag import __version__
@@ -31,9 +32,11 @@ from disclosure_rag.answer.pipeline import AnswerPipeline
 from disclosure_rag.audit import AuditLog, AuditRecord, ReplayResult, replay
 from disclosure_rag.config import get_settings
 from disclosure_rag.corpus import Corpus, load_corpus
+from disclosure_rag.examples import working_examples
 from disclosure_rag.metrics import Metrics
 from disclosure_rag.render import render_page_with_regions
 from disclosure_rag.versioning import Snapshot
+from disclosure_rag.viewer import PAGE
 
 logger = logging.getLogger("disclosure_rag")
 
@@ -62,6 +65,10 @@ class DocumentSummary(BaseModel):
     pages: int
     tagged_facts: int
     chunks: int
+    example_questions: list[str] = Field(
+        default_factory=list,
+        description="Questions this filing answers, verified at startup rather than assumed",
+    )
 
 
 def _configure_logging(level: str) -> None:
@@ -118,6 +125,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.metrics = Metrics()
     if audit_path:
         logger.info("recording answers to %s", audit_path)
+
+    # Computed once, by asking. See disclosure_rag.examples for why an example
+    # is verified rather than assumed.
+    pipeline: AnswerPipeline = app.state.pipeline
+
+    def asker(document_id: str) -> Callable[[str], Answer]:
+        return lambda question: pipeline.answer(question, document_id)
+
+    app.state.examples = {
+        document_id: working_examples(ledger, asker(document_id))
+        for document_id, ledger in corpus.ledgers.items()
+    }
     yield
 
 
@@ -150,6 +169,12 @@ async def correlate(
     return response
 
 
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def viewer() -> str:
+    """A page for asking a question and seeing the region the answer came from."""
+    return PAGE
+
+
 @app.get("/health", response_model=Health, tags=["ops"])
 def health(request: Request) -> Health:
     settings = get_settings()
@@ -175,6 +200,7 @@ def documents(request: Request) -> list[DocumentSummary]:
             pages=corpus.page_counts.get(document_id, 0),
             tagged_facts=len(ledger.facts),
             chunks=sum(1 for chunk in corpus.chunks if chunk.document_id == document_id),
+            example_questions=request.app.state.examples.get(document_id, []),
         )
         for document_id, ledger in sorted(corpus.ledgers.items())
     ]

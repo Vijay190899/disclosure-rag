@@ -186,7 +186,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 205 tests.
+Docker, GitHub Actions, mypy strict, 212 tests.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -198,15 +198,20 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 205 tests
+make check                   # lint, typecheck, 212 tests
 
 make fetch                   # download ESEF report packages into data/filings
 make labels                  # build the fact ledgers from them
 make eval                    # reproduce every number above
-DISCLOSURE_RAG_CORPUS=data/ledgers make run    # API on :8000
+DISCLOSURE_RAG_CORPUS=data/ledgers make run    # API and viewer on :8000
 ```
 
-Then:
+Open `localhost:8000` for the viewer: pick a filing, ask, and the cited region is drawn on the page.
+Each filing offers a few example questions, and those are verified at startup by asking them, so an
+example that would abstain is never shown. The viewer is one file with no build step and no external
+requests, because the interesting part of this project is the citation rather than the front end.
+
+Or go straight at the API:
 
 ```bash
 curl -s localhost:8000/documents | jq
@@ -238,8 +243,8 @@ Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
 - **The narrative path is governed by abstention rather than measured.** A gold set for it needs
   reviewed question and answer pairs. Mechanical extraction produces candidates but cannot promote
   them: a statement row and a narrative sentence restating it contain the same label and the same
-  figure, so the available signals do not separate them. The build exports 495 ranked candidates for
-  review.
+  figure, so the available signals do not separate them. The build exports 495 ranked candidates and
+  `make review` confirms them one keystroke at a time, highest-likelihood first.
 - **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
   but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
   Labels are pooled across the corpus to reduce this.

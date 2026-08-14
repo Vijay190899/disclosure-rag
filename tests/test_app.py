@@ -83,3 +83,21 @@ def test_audit_endpoints_say_so_when_no_log_is_configured() -> None:
     with TestClient(app) as client:
         assert client.get("/audit/whatever").status_code == 404
         assert client.post("/audit/whatever/replay").status_code == 404
+
+
+def test_the_viewer_is_served_and_self_contained() -> None:
+    """No CDN, no build step: a front end that needs npm to demo a Python
+    service is a liability rather than a feature."""
+    with TestClient(app) as client:
+        body = client.get("/").text
+    assert "<!doctype html>" in body.lower()
+    assert "disclosure-rag" in body
+    assert "http://" not in body.replace("http://localhost", "")
+    assert "cdn" not in body.lower()
+
+
+def test_the_viewer_calls_only_the_service_it_is_served_from() -> None:
+    with TestClient(app) as client:
+        body = client.get("/").text
+    for path in ('"/documents"', '"/health"', '"/query"'):
+        assert path in body

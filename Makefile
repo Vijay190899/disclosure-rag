@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test check run docker fetch labels eval help
+.PHONY: install lint format typecheck test check run docker fetch labels eval review help
 
 help:
 	@echo "install    - create venv and install deps with uv"
@@ -7,11 +7,12 @@ help:
 	@echo "typecheck  - mypy in strict mode"
 	@echo "test       - run pytest"
 	@echo "check      - lint + typecheck + test (what CI runs)"
-	@echo "run        - start the FastAPI app on :8000"
+	@echo "run        - start the API and viewer on :8000"
 	@echo "docker     - build the container image"
 	@echo "fetch      - download ESEF report packages into data/filings"
 	@echo "labels     - build fact ledgers from data/filings"
 	@echo "eval       - run the retrieval baseline against the ledgers"
+	@echo "review     - confirm prose pair candidates, one keystroke each"
 
 install:
 	uv sync --extra dev
@@ -50,3 +51,8 @@ labels:
 # `make eval` reproduces the README rather than something adjacent to it.
 eval:
 	uv run python -m disclosure_rag.evaluation.run --ledgers data/ledgers --chunk-tokens 600 --overlap-tokens 20 --out data/results.json
+
+# Candidates are mechanical, confirmation is not. See the module docstring for
+# why no available signal separates a narrative sentence from a table row.
+review:
+	uv run python -m disclosure_rag.labels.review --ledgers data/ledgers
