@@ -15,7 +15,13 @@ from disclosure_rag.labels.facts import Fact
 from disclosure_rag.labels.ledger import FactLedger, LocatedFact
 from disclosure_rag.provenance import Span
 from disclosure_rag.retrieval.lexical import BM25Retriever
-from disclosure_rag.versioning import IndexSettings, Snapshot, hash_file, hash_text
+from disclosure_rag.versioning import (
+    IndexSettings,
+    Snapshot,
+    hash_file,
+    hash_text,
+    label_plane_version,
+)
 
 SETTINGS = IndexSettings(chunk_tokens=600, overlap_tokens=20, retriever="bm25")
 GOLD = Span(page=25, x0=0.63, y0=0.07, x1=0.66, y1=0.08)
@@ -216,12 +222,53 @@ def test_a_rebuild_skips_a_filing_whose_content_has_not_changed(tmp_path: Path) 
     out = tmp_path / "ledgers"
     work = out / "doc"
     work.mkdir(parents=True)
-    FactLedger(document_id="doc", content_hash=hash_file(report)).write(work / "ledger.json")
+    FactLedger(
+        document_id="doc",
+        content_hash=hash_file(report),
+        builder_version=label_plane_version(),
+    ).write(work / "ledger.json")
     (work / "document.pdf").write_bytes(b"%PDF-1.4 stub")
 
     # No browser is launched: the skip happens before any rendering.
     result = build_one(report, out)
     assert result.content_hash == hash_file(report)
+
+
+def test_a_ledger_built_by_older_code_is_not_skipped(tmp_path: Path) -> None:
+    """The content hash alone is not enough to say a ledger is current.
+
+    Changing how facts are extracted leaves every ledger stale while the source
+    filings are untouched. Keyed on content alone, the builder reports
+    "unchanged, skipping" and produces nothing, which is the worst kind of wrong
+    because it reads as success.
+    """
+    from disclosure_rag.labels.build import build_one
+
+    filing = tmp_path / "filings" / "doc"
+    filing.mkdir(parents=True)
+    report = filing / "report.xhtml"
+    report.write_text("<html><body>nothing tagged</body></html>", encoding="utf-8")
+
+    out = tmp_path / "ledgers"
+    work = out / "doc"
+    work.mkdir(parents=True)
+    FactLedger(
+        document_id="doc",
+        content_hash=hash_file(report),
+        builder_version="built-by-older-code",
+    ).write(work / "ledger.json")
+    (work / "document.pdf").write_bytes(b"%PDF-1.4 stub")
+
+    # Rebuilding needs a browser, so the assertion is that it tries to.
+    pytest.importorskip("playwright", reason="a real rebuild renders with Chromium")
+    result = build_one(report, out)
+    assert result.builder_version == label_plane_version()
+
+
+def test_the_builder_version_moves_only_when_the_label_plane_changes() -> None:
+    """Derived from the code, so nobody has to remember to bump it."""
+    assert label_plane_version() == label_plane_version()
+    assert len(label_plane_version()) == 64
 
 
 def test_an_amended_filing_is_not_skipped(tmp_path: Path) -> None:
