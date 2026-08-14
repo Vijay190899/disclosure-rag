@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Owner** | Vijay Ananth Karunanithi |
-| **Version** | 1.0.0 |
-| **Last updated** | 2026-07-30 |
+| **Version** | 1.1.0 |
+| **Last updated** | 2026-08-14 |
 
 Sections 5 and 6 define contracts that everything downstream couples to, so they are updated in the
 same change set that alters them. The rest is updated at release boundaries.
@@ -26,6 +26,7 @@ Questions it cannot support are declined rather than guessed at.
 - Retrieval over the narrative content that carries no tags.
 - Abstention as a designed output, not an error path.
 - Every published number reproducible from a seed with no credentials.
+- Every answer reproducible later, against the corpus version that produced it.
 - Deployable as a container.
 
 **Non-goals**
@@ -168,7 +169,13 @@ not score exact citations as estimates. [ADR-0003](adr/0003-provenance-is-a-list
 outlined. The wire format is exactly what a citation returns, so a client hands one straight to the
 other.
 
-`GET /documents` lists the corpus. `GET /health` reports liveness, version and document count.
+`GET /documents` lists the corpus. `GET /health` reports liveness, version, document count and the
+snapshot in force. `GET /metrics` exposes Prometheus counters.
+
+`GET /snapshot` returns the corpus version answers are currently produced against: every document's
+content hash plus the index settings. `GET /audit/{id}` returns a recorded answer and
+`POST /audit/{id}/replay` re-runs it, returning `reproduced`, `superseded` or `diverged`.
+[ADR-0007](adr/0007-answers-are-durable-evidence.md).
 
 Every response carries an `x-request-id`. Contracts are Pydantic models; a breaking change is a
 version bump.
@@ -182,6 +189,7 @@ Deterministic, seeded, no credentials. `make eval` reproduces every published nu
 | Retrieval | Recall@1/5/10, MRR@10, nDCG@10, citation IoU@0.5 |
 | End to end | Routing accuracy, answer exact match, abstention precision and recall, false answer rate, wrong-period trap survival, latency p50 and p95 |
 | Label quality | Share of tagged facts located, median IoU against an independent text search |
+| Calibration | Expected calibration error and a reliability table over answers actually given |
 
 Cases are generated from the ledgers in three classes: answerable figures, unanswerable questions
 built from another filing's concepts, and wrong-period traps that ask for a real concept in a year the
@@ -189,7 +197,24 @@ filing does not report. Strata are never pooled, a question with no result count
 deltas between configurations are reported as paired bootstrap intervals.
 [ADR-0006](adr/0006-deterministic-evaluation.md).
 
-## 8. Security and data protection
+## 8. Versioning and audit
+
+A citation into a document nobody can identify is not evidence. Two derived identifiers fix that.
+
+A **document version** is the content hash of the source filing. A **snapshot id** is the hash of
+every document version together with the index settings, so a changed filing, an added filing or a
+different chunk size all move it. Both are derived rather than assigned, and documents are sorted
+before hashing so load order does not affect the result.
+
+Every answer carries its snapshot id. When an audit log is configured, answers append to
+append-only JSONL and any record can be replayed against the live pipeline. Superseded results name
+what moved rather than saying only that something did. Timings are excluded from the comparison,
+because including them would flag every replay and train people to ignore the signal.
+
+The same hashes make ingest incremental: unchanged filings are skipped before any rendering, taking
+a no-op rebuild of eight filings from minutes to under a second.
+
+## 9. Security and data protection
 
 - **Untrusted content.** Document text is untrusted input. Retrieved passages are isolated from
   instructions and the output schema is enforced. The concrete threat is white-on-white text in a PDF
@@ -203,17 +228,19 @@ deltas between configurations are reported as paired bootstrap intervals.
   implementation is a configuration change rather than a rewrite.
 - **Secrets** come from the environment and are never committed.
 
-## 9. Deployment and operations
+## 10. Deployment and operations
 
 Container runs as a non-root user with a pinned base and a healthcheck. The corpus is supplied by
 `DISCLOSURE_RAG_CORPUS` and the service starts cleanly without one, so no data is baked into the
 image.
 
-Structured JSON logs with a request correlation id. Per-stage timings on every response. The index is
+Structured JSON logs with a request correlation id. Per-stage timings and the snapshot id on every
+response. Prometheus counters at `/metrics`, deliberately few: the abstention rate is the one worth
+alerting on, since it rises long before anyone notices a wrong answer. The index is
 in memory: at a few thousand chunks a matrix operation beats a network round trip, and Qdrant is
 supported behind the `Retriever` protocol for corpora that outgrow one machine.
 
-## 10. Known limitations
+## 11. Known limitations
 
 - **Three filings.** Enough for the benchmark to be meaningful, not enough to claim generality.
 - **Retrieval quality is moderate.** Recall@10 of 0.692 on figure questions is a baseline. It matters

@@ -1,9 +1,10 @@
 # disclosure-rag
 
 **Question answering over EU annual financial reports, where every answer points at the exact figure
-it came from.** A router sends questions about tagged figures to a structured lookup and everything
-else to retrieval, so numbers are exact rather than approximated, and unsupported questions are
-declined rather than guessed at.
+it came from and can be proved again months later.** A router sends questions about tagged figures to
+a structured lookup and everything else to retrieval, so numbers are exact rather than approximated,
+unsupported questions are declined rather than guessed at, and every answer records the version of
+the corpus that produced it.
 
 ![A cited figure outlined on the source page](docs/images/citation.png)
 
@@ -87,6 +88,22 @@ default. [ADR-0005](docs/adr/0005-bm25-default-no-agent-framework.md).
 located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
 for the same figure.
 
+**Is the confidence number worth anything?** Expected calibration error over the 139 answers given at
+the shipped threshold:
+
+| Confidence band | n | mean confidence | accuracy | gap |
+|---|---|---|---|---|
+| 0.8 to 0.9 | 3 | 0.800 | 0.000 | **+0.800** |
+| 0.9 to 1.0 | 136 | 1.000 | 0.963 | +0.037 |
+
+**ECE 0.053.** The structured path claims 1.0 and is right 96.3% of the time. The three passage
+answers above the threshold are confidently wrong, which is the dangerous direction because those are
+the answers a reader would not check, and the worst-band figure is reported alongside the average
+precisely so one good number cannot hide three bad ones.
+
+Measured only over answers the system actually gave. An abstention's confidence is a support score,
+not a prediction that declining was right, so including them would measure nothing.
+
 ### Abstention is a chosen operating point, not a default
 
 | Threshold | Exact match on answerable | False answer rate on unanswerable |
@@ -101,8 +118,6 @@ through the structured layer at full confidence, so a passage-path threshold can
 it does cost is narrative recall, which this corpus has no gold set for, and that trade is
 deliberate: for a document a reader has to verify, an answer they cannot check is worth less than
 none.
-
-## How it works
 
 ```mermaid
 flowchart LR
@@ -125,7 +140,37 @@ flowchart LR
     class P,PA soft
 ```
 
-Ingestion runs alongside, offline: the filing is rendered to PDF, parsed into layout blocks that
+## An answer you can prove again
+
+A citation into a document nobody can identify is a screenshot, not evidence. Filings get amended,
+indexes get rebuilt, settings change, and six months later "page 25, region (0.630, 0.077)" means
+nothing on its own.
+
+So every answer carries a **snapshot id**: the hash of every filing's contents together with the
+settings that decide what the index holds. It is derived rather than assigned, because an identifier
+a human maintains is one that eventually lies.
+
+With an audit log configured, answers are appended to append-only JSONL and any record can be
+replayed:
+
+```bash
+curl -s localhost:8000/snapshot | jq              # what is currently in force
+curl -s localhost:8000/audit/1fe3e35ce688052b     # the recorded answer
+curl -sX POST localhost:8000/audit/1fe3e35ce688052b/replay
+# { "outcome": "reproduced", "detail": "same snapshot, same answer" }
+```
+
+Three outcomes. **Reproduced** means the record is still evidence. **Superseded** means the corpus
+moved on, and the reply says which filing changed and how, which is a fact an auditor needs rather
+than a failure to hide. **Diverged** means the corpus did not move and the answer did, which is a
+defect and the only outcome that should ever be alarming.
+
+The same content hashes make ingest incremental: a no-op rebuild of eight filings takes **0.53
+seconds** instead of minutes of headless rendering.
+
+## How it works
+
+Ingestion runs offline: the filing is rendered to PDF, parsed into layout blocks that
 keep their page geometry, and chunked so that each chunk carries the list of page regions it covers.
 That list is what makes a citation resolvable to a region rather than to a passage, and it is a list
 because a table can continue across a page break.
@@ -141,7 +186,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 164 tests.
+Docker, GitHub Actions, mypy strict, 205 tests.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -153,7 +198,7 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 164 tests
+make check                   # lint, typecheck, 205 tests
 
 make fetch                   # download ESEF report packages into data/filings
 make labels                  # build the fact ledgers from them
@@ -175,7 +220,12 @@ curl -s localhost:8000/query -H 'content-type: application/json' -d '{
 curl -s "localhost:8000/page/<id>/25.png?regions=0.630,0.077,0.664,0.087" -o citation.png
 ```
 
-Every response carries per-stage timings and a request id, and logs are structured JSON.
+Every response carries per-stage timings, a request id and the snapshot it was produced against.
+Logs are structured JSON, and `/metrics` exposes Prometheus counters. The one worth alerting on is
+the abstention rate: it rises long before anyone notices a wrong answer, and it is the earliest sign
+that a corpus has gone stale or a filing has changed shape.
+
+Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
 
 ## Limitations
 
