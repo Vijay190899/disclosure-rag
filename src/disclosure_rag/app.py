@@ -22,18 +22,23 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from disclosure_rag import __version__
 from disclosure_rag.answer.models import Answer
 from disclosure_rag.answer.pipeline import AnswerPipeline
+from disclosure_rag.audit import AuditLog, AuditRecord, ReplayResult, replay
 from disclosure_rag.config import get_settings
 from disclosure_rag.corpus import Corpus, load_corpus
+from disclosure_rag.metrics import Metrics
 from disclosure_rag.render import render_page_with_regions
+from disclosure_rag.versioning import Snapshot
 
 logger = logging.getLogger("disclosure_rag")
 
 CORPUS_ENV = "DISCLOSURE_RAG_CORPUS"
+AUDIT_ENV = "DISCLOSURE_RAG_AUDIT_LOG"
 
 
 class Health(BaseModel):
@@ -41,6 +46,9 @@ class Health(BaseModel):
     version: str
     environment: str
     documents: int
+    snapshot_id: str = Field(
+        default="", description="Identifies the corpus and settings answers are produced against"
+    )
 
 
 class QueryRequest(BaseModel):
@@ -98,8 +106,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.corpus = corpus
     app.state.pipeline = AnswerPipeline(
-        corpus.ledgers, corpus.retriever, abstain_below=settings.answer.abstain_below
+        corpus.ledgers,
+        corpus.retriever,
+        abstain_below=settings.answer.abstain_below,
+        snapshot_id=corpus.snapshot.snapshot_id if corpus.snapshot else "",
     )
+    # Answers are recorded when a log is configured. Off by default, because
+    # writing an audit trail nobody asked for is its own kind of surprise.
+    audit_path = os.environ.get(AUDIT_ENV)
+    app.state.audit = AuditLog(Path(audit_path)) if audit_path else None
+    app.state.metrics = Metrics()
+    if audit_path:
+        logger.info("recording answers to %s", audit_path)
     yield
 
 
@@ -140,6 +158,11 @@ def health(request: Request) -> Health:
         version=__version__,
         environment=settings.environment,
         documents=len(request.app.state.corpus.ledgers),
+        snapshot_id=(
+            request.app.state.corpus.snapshot.snapshot_id
+            if request.app.state.corpus.snapshot
+            else ""
+        ),
     )
 
 
@@ -163,7 +186,80 @@ def query(request: Request, body: QueryRequest) -> Answer:
     if body.document_id not in corpus.ledgers:
         raise HTTPException(status_code=404, detail=f"unknown document {body.document_id!r}")
     pipeline: AnswerPipeline = request.app.state.pipeline
-    return pipeline.answer(body.question, body.document_id, top_k=body.top_k)
+    answer = pipeline.answer(body.question, body.document_id, top_k=body.top_k)
+
+    metrics: Metrics = request.app.state.metrics
+    metrics.record_answer(answer.route.value, answer.status.value, sum(answer.timings_ms.values()))
+
+    log: AuditLog | None = request.app.state.audit
+    if log is not None and corpus.snapshot is not None:
+        record = log.append(
+            AuditRecord.create(body.question, body.document_id, answer, corpus.snapshot)
+        )
+        answer = answer.model_copy(update={"audit_id": record.record_id})
+    return answer
+
+
+@app.get("/metrics", response_class=PlainTextResponse, tags=["ops"])
+def metrics(request: Request) -> str:
+    """Prometheus exposition.
+
+    The counter worth alerting on is the abstention rate: it rises long before
+    anyone notices a wrong answer, and it is the earliest sign that a corpus has
+    gone stale or a filing has changed shape.
+    """
+    corpus: Corpus = request.app.state.corpus
+    collected: Metrics = request.app.state.metrics
+    return collected.render(
+        documents=len(corpus.ledgers),
+        snapshot_id=corpus.snapshot.snapshot_id if corpus.snapshot else "",
+    )
+
+
+@app.get("/snapshot", response_model=Snapshot, tags=["audit"])
+def snapshot(request: Request) -> Snapshot:
+    """The corpus and settings currently in force.
+
+    Every answer carries this id, so an answer can be tied back to exactly which
+    version of which filings produced it.
+    """
+    current: Snapshot | None = request.app.state.corpus.snapshot
+    if current is None:
+        raise HTTPException(status_code=503, detail="no corpus loaded")
+    return current
+
+
+@app.get("/audit/{record_id}", response_model=AuditRecord, tags=["audit"])
+def audit_record(request: Request, record_id: str) -> AuditRecord:
+    log: AuditLog | None = request.app.state.audit
+    if log is None:
+        raise HTTPException(status_code=404, detail=f"no audit log configured, set {AUDIT_ENV}")
+    record = log.get(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"unknown record {record_id!r}")
+    return record
+
+
+@app.post("/audit/{record_id}/replay", response_model=ReplayResult, tags=["audit"])
+def audit_replay(request: Request, record_id: str) -> ReplayResult:
+    """Re-run a recorded answer and report whether it still holds.
+
+    Reproduced means the record is still evidence. Superseded means the corpus
+    has moved on, which is a fact an auditor needs rather than a failure.
+    Diverged means the corpus did not move and the answer did, which is a defect.
+    """
+    log: AuditLog | None = request.app.state.audit
+    if log is None:
+        raise HTTPException(status_code=404, detail=f"no audit log configured, set {AUDIT_ENV}")
+    record = log.get(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"unknown record {record_id!r}")
+    current: Snapshot | None = request.app.state.corpus.snapshot
+    if current is None:
+        raise HTTPException(status_code=503, detail="no corpus loaded")
+    result = replay(record, request.app.state.pipeline, current)
+    request.app.state.metrics.record_replay(result.outcome.value)
+    return result
 
 
 @app.get("/page/{document_id}/{page}.png", tags=["query"])

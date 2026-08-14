@@ -46,7 +46,9 @@ class AnswerPipeline:
         retriever: Retriever,
         generator: Generator | None = None,
         abstain_below: float = 0.8,
+        snapshot_id: str = "",
     ) -> None:
+        self.snapshot_id = snapshot_id
         self.ledgers = ledgers
         self.retriever = retriever
         self.generator = generator or ExtractiveGenerator()
@@ -64,6 +66,11 @@ class AnswerPipeline:
             timings[stage] = round((time.perf_counter() - start) * 1000, 2)
 
     def answer(self, question: str, document_id: str, top_k: int = 10) -> Answer:
+        return self._answer(question, document_id, top_k).model_copy(
+            update={"snapshot_id": self.snapshot_id}
+        )
+
+    def _answer(self, question: str, document_id: str, top_k: int = 10) -> Answer:
         timings: dict[str, float] = {}
         ledger = self.ledgers.get(document_id)
         if ledger is None:

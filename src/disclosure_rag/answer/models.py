@@ -59,6 +59,11 @@ class Answer(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     reason: str = Field(default="", description="Why it abstained, when it did")
+    snapshot_id: str = Field(
+        default="",
+        description="The corpus and settings this was produced against, for replay",
+    )
+    audit_id: str = Field(default="", description="Record id in the audit log, when recorded")
     timings_ms: dict[str, float] = Field(default_factory=dict)
 
     @property

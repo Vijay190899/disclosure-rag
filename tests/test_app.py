@@ -64,3 +64,22 @@ def test_an_empty_corpus_directory_fails_the_start(
     monkeypatch.setenv("DISCLOSURE_RAG_CORPUS", str(tmp_path))
     with pytest.raises(RuntimeError, match="no usable documents"), TestClient(app):
         pass
+
+
+def test_metrics_are_exposed_in_prometheus_format() -> None:
+    with TestClient(app) as client:
+        body = client.get("/metrics").text
+    assert "disclosure_rag_documents" in body
+    assert "# TYPE disclosure_rag_answers_total counter" in body
+
+
+def test_the_snapshot_id_is_reported_on_health() -> None:
+    """An answer is only evidence if you can say which corpus produced it."""
+    with TestClient(app) as client:
+        assert "snapshot_id" in client.get("/health").json()
+
+
+def test_audit_endpoints_say_so_when_no_log_is_configured() -> None:
+    with TestClient(app) as client:
+        assert client.get("/audit/whatever").status_code == 404
+        assert client.post("/audit/whatever/replay").status_code == 404

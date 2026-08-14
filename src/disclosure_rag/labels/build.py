@@ -18,6 +18,7 @@ from disclosure_rag.labels.facts import LxmlFactSource
 from disclosure_rag.labels.ledger import FactLedger, build, write_index, write_review_csv
 from disclosure_rag.labels.locate import confirm_by_text, locate_facts, render_to_pdf
 from disclosure_rag.labels.taxonomy import load_labels
+from disclosure_rag.versioning import hash_file
 
 
 def _page_blocks(pdf_path: Path) -> list[list[str]]:
@@ -75,7 +76,13 @@ def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None)
     plain_pdf = render_to_pdf(report, work / "document.pdf")
 
     ledger = build(
-        document_id, facts, located, _page_blocks(plain_pdf), confirmation, concept_labels
+        document_id,
+        facts,
+        located,
+        _page_blocks(plain_pdf),
+        confirmation,
+        concept_labels,
+        content_hash=hash_file(report),
     )
     ledger.write(work / "ledger.json")
     print(f"[labels] {document_id}: {len(ledger.prose_pairs)} prose pairs")

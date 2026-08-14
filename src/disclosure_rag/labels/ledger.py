@@ -99,6 +99,10 @@ class FactLedger(BaseModel):
     """Everything the label plane knows about one document."""
 
     document_id: str
+    content_hash: str = Field(
+        default="",
+        description="Hash of the source filing. An amended filing gets a different one.",
+    )
     facts: list[LocatedFact] = Field(default_factory=list)
     prose_pairs: list[ProsePair] = Field(default_factory=list)
     coverage: float = Field(default=0.0, description="Share of facts that were located")
@@ -248,6 +252,7 @@ def build(
     page_blocks: list[list[str]] | None = None,
     confirmation: Confirmation | None = None,
     concept_labels: dict[str, str] | None = None,
+    content_hash: str = "",
 ) -> FactLedger:
     """Join extracted facts with their locations into a ledger."""
     rows = [
@@ -263,6 +268,7 @@ def build(
         )
     return FactLedger(
         document_id=document_id,
+        content_hash=content_hash,
         facts=rows,
         prose_pairs=pairs,
         coverage=len(rows) / len(facts) if facts else 0.0,

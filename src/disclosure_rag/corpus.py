@@ -15,6 +15,7 @@ from disclosure_rag.ingest.chunker import Chunk, chunk_blocks
 from disclosure_rag.labels.ledger import FactLedger
 from disclosure_rag.retrieval.base import Retriever
 from disclosure_rag.retrieval.lexical import BM25Retriever
+from disclosure_rag.versioning import IndexSettings, Snapshot
 
 
 @dataclass
@@ -26,11 +27,15 @@ class Corpus:
     pdf_paths: dict[str, Path] = field(default_factory=dict)
     page_counts: dict[str, int] = field(default_factory=dict)
     retriever: Retriever = field(default_factory=BM25Retriever)
+    snapshot: Snapshot | None = None
 
     @classmethod
     def empty(cls) -> Corpus:
         corpus = cls()
         corpus.retriever.index([])
+        corpus.snapshot = Snapshot.build(
+            {}, IndexSettings(chunk_tokens=0, overlap_tokens=0, retriever=corpus.retriever.name)
+        )
         return corpus
 
 
@@ -66,4 +71,14 @@ def load_corpus(
         )
 
     corpus.retriever.index(corpus.chunks)
+    # Derived after loading, so it reflects what is actually in the index rather
+    # than what was asked for.
+    corpus.snapshot = Snapshot.build(
+        {document_id: ledger.content_hash for document_id, ledger in corpus.ledgers.items()},
+        IndexSettings(
+            chunk_tokens=chunk_tokens,
+            overlap_tokens=overlap_tokens,
+            retriever=corpus.retriever.name,
+        ),
+    )
     return corpus
