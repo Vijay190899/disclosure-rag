@@ -160,6 +160,23 @@ def pending(
     return [pair for value, _, pair in sorted(scored, key=lambda row: -row[0]) if value >= floor]
 
 
+def wording(pair: ProsePair, ledger: FactLedger, pooled: dict[str, set[str]] | None) -> str:
+    """What to call the concept on screen.
+
+    The filing's own label when it has one, otherwise another issuer's wording
+    for the same concept. Falling back to the raw concept name asks a reviewer
+    to decide whether a German sentence is about "ifrs-full:CurrentAssets",
+    which is a translation task on top of the judgement they were asked for.
+    """
+    own = ledger.concept_labels.get(pair.concept, "")
+    if own:
+        return own
+    borrowed = sorted(pooled.get(pair.concept, set())) if pooled else []
+    if borrowed:
+        return f"{borrowed[0]}  (another filing's wording for {pair.concept})"
+    return pair.concept
+
+
 def render(pair: ProsePair, index: int, total: int, label: str) -> str:
     return "\n".join(
         [
@@ -207,7 +224,7 @@ def review_ledger(
     confirmed = 0
     stop = False
     for position, pair in enumerate(queue, start=1):
-        label = ledger.concept_labels.get(pair.concept, "")
+        label = wording(pair, ledger, pooled)
         print(render(pair, position, len(queue), label))
         choice = ""
         while choice not in {"y", "n", "s", "q"}:

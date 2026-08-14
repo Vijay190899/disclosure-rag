@@ -6,6 +6,7 @@ from pathlib import Path
 from disclosure_rag.labels.facts import Fact, LxmlFactSource
 from disclosure_rag.labels.ledger import (
     FactLedger,
+    ProsePair,
     build,
     extract_prose_pairs,
     is_prose,
@@ -197,3 +198,41 @@ def test_prose_pairs_record_whether_they_named_the_concept() -> None:
         {"ifrs-full:Assets": "Gesamtaktiva"},
     )
     assert pairs and pairs[0].names_concept is True
+
+
+def test_a_concept_with_no_declared_label_shows_a_borrowed_wording() -> None:
+    """Asking a reviewer whether a German sentence is about
+    "ifrs-full:CurrentAssets" adds a translation task to the judgement."""
+    from disclosure_rag.labels.review import wording
+
+    pair = ProsePair(
+        document_id="doc",
+        sentence="Bei den kurzfristigen Vermoegenswerten zeigte sich eine Erhoehung.",
+        mention="797,4",
+        page=91,
+        fact_id="f1",
+        concept="ifrs-full:CurrentAssets",
+        value=Decimal("797432000"),
+        gold_span=Span(page=91, x0=0.1, y0=0.1, x1=0.2, y1=0.2),
+    )
+    ledger = FactLedger(document_id="doc", concept_labels={})
+    shown = wording(pair, ledger, {"ifrs-full:CurrentAssets": {"Kurzfristige Vermoegenswerte"}})
+    assert shown.startswith("Kurzfristige Vermoegenswerte")
+    assert "ifrs-full:CurrentAssets" in shown
+
+
+def test_the_filings_own_label_wins_over_a_borrowed_one() -> None:
+    from disclosure_rag.labels.review import wording
+
+    pair = ProsePair(
+        document_id="doc",
+        sentence="Die Bilanzsumme stieg.",
+        mention="162,8",
+        page=1,
+        fact_id="f1",
+        concept="ifrs-full:Assets",
+        value=Decimal("162788000"),
+        gold_span=Span(page=1, x0=0.1, y0=0.1, x1=0.2, y1=0.2),
+    )
+    ledger = FactLedger(document_id="doc", concept_labels={"ifrs-full:Assets": "Bilanzsumme"})
+    assert wording(pair, ledger, {"ifrs-full:Assets": {"Summe Aktiva"}}) == "Bilanzsumme"
