@@ -5,6 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from disclosure_rag.answer.models import Answer, Route, Status
 from disclosure_rag.answer.pipeline import AnswerPipeline
 from disclosure_rag.audit import AuditLog, AuditRecord, ReplayOutcome, replay
@@ -224,6 +226,7 @@ def test_a_rebuild_skips_a_filing_whose_content_has_not_changed(tmp_path: Path) 
 
 def test_an_amended_filing_is_not_skipped(tmp_path: Path) -> None:
     """A stale ledger must be rebuilt, not returned because a file exists."""
+    pytest.importorskip("playwright", reason="a real rebuild renders with Chromium")
     from disclosure_rag.labels.build import build_one
 
     filing = tmp_path / "filings" / "doc"
@@ -244,6 +247,7 @@ def test_an_amended_filing_is_not_skipped(tmp_path: Path) -> None:
 
 def test_a_forced_rebuild_ignores_an_up_to_date_ledger(tmp_path: Path) -> None:
     """An escape hatch for when the builder changed rather than the filing."""
+    pytest.importorskip("playwright", reason="a real rebuild renders with Chromium")
     from disclosure_rag.labels.build import build_one
 
     filing = tmp_path / "filings" / "doc"
