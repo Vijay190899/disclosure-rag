@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from disclosure_rag.answer.models import Route, Status
 from disclosure_rag.answer.pipeline import AnswerPipeline
+from disclosure_rag.evaluation.calibration import Calibration, calibrate
 from disclosure_rag.evaluation.questions import describe_period
 from disclosure_rag.labels.ledger import FactLedger
 
@@ -68,6 +69,7 @@ class Outcome:
     route: Route
     value: str | None
     latency_ms: float
+    confidence: float = 0.0
     exact_value: bool = False
 
 
@@ -108,6 +110,7 @@ class BenchmarkReport(BaseModel):
 
     p50_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
+    calibration: Calibration = Field(default_factory=Calibration)
 
 
 def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[Case]:
@@ -219,6 +222,7 @@ class Benchmark:
                     route=answer.route,
                     value=answer.value,
                     latency_ms=latency,
+                    confidence=answer.confidence,
                     exact_value=bool(answer.value and answer.value == case.expected_value),
                 )
             )
@@ -256,6 +260,27 @@ class Benchmark:
             trap_survival=share(sum(1 for o in traps if o.value is None), len(traps)),
             ambiguous_cases=len(ambiguous),
             ambiguity_detected=share(sum(1 for o in ambiguous if not o.answered), len(ambiguous)),
+            # Calibration is measured over answers the system actually gave.
+            # Including abstentions would conflate two different questions: an
+            # abstention's confidence is a support score for a passage, not a
+            # prediction that abstaining was right, and scoring a correct
+            # 0.0-confidence abstention as accuracy 1.0 produces a large gap
+            # that means nothing.
+            #
+            # Answering a question that had no answer is counted as incorrect
+            # regardless of the value returned, because it is.
+            calibration=calibrate(
+                [
+                    (
+                        o.confidence,
+                        o.exact_value
+                        if o.case.expectation is Expectation.ANSWER_FROM_LEDGER
+                        else False,
+                    )
+                    for o in self.outcomes
+                    if o.answered
+                ]
+            ),
             p50_latency_ms=round(statistics.median(latencies), 2),
             p95_latency_ms=round(latencies[min(int(len(latencies) * 0.95), len(latencies) - 1)], 2),
         )

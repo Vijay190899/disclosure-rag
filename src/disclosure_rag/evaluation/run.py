@@ -27,6 +27,7 @@ from disclosure_rag.evaluation.benchmark import (
     render_risk_coverage,
     risk_coverage,
 )
+from disclosure_rag.evaluation.calibration import render_calibration
 from disclosure_rag.evaluation.metrics import (
     COVERAGE_THRESHOLD,
     Result,
@@ -240,6 +241,7 @@ def main() -> int:
     cases = build_cases(corpus.ledgers)
     end_to_end = Benchmark(pipeline).run(cases)
     print(render_report(end_to_end))
+    print(render_calibration(end_to_end.calibration))
     report["end_to_end"] = end_to_end.model_dump(mode="json")
 
     curve = risk_coverage(pipeline, cases, (0.3, 0.5, 0.7, 0.8, 0.9))
