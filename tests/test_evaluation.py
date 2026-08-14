@@ -233,3 +233,44 @@ def test_question_sampling_is_seeded_and_not_document_order() -> None:
     again = [q.question_id for q in questions_from_ledger(ledger, limit_per_document=10)]
     assert first == again, "sampling must be reproducible"
     assert first != [f"doc:ef:f{i:03d}" for i in range(10)], "must not be document order"
+
+
+def test_one_sentence_restating_two_years_becomes_one_question() -> None:
+    """ "... TEUR -1.275 (VJ: TEUR -3.929)" tags both figures, and stripping them
+    leaves a query that cannot say which year is meant. Two questions would mark
+    a retriever wrong whichever one it found."""
+    from disclosure_rag.evaluation.questions import Stratum, questions_from_ledger
+    from disclosure_rag.labels.ledger import ProsePair
+
+    sentence = (
+        "Aus der Geldflussrechnung resultiert ein negativer Cashflow aus der "
+        "laufenden Geschaeftstaetigkeit in Hoehe von TEUR -1.275 (VJ: TEUR -3.929)."
+    )
+    spans = [
+        Span(page=25, x0=0.1, y0=0.1, x1=0.2, y1=0.2),
+        Span(page=25, x0=0.3, y0=0.1, x1=0.4, y1=0.2),
+    ]
+    ledger = FactLedger(
+        document_id="doc",
+        prose_pairs=[
+            ProsePair(
+                document_id="doc",
+                sentence=sentence,
+                mention=mention,
+                page=25,
+                fact_id=f"f{index}",
+                concept="ifrs-full:CashFlowsFromUsedInOperatingActivities",
+                value=Decimal(value),
+                gold_span=span,
+                confirmed=True,
+            )
+            for index, (mention, value, span) in enumerate(
+                [("-1.275", "-1275000", spans[0]), ("-3.929", "-3929000", spans[1])]
+            )
+        ],
+    )
+    narrative = [q for q in questions_from_ledger(ledger) if q.stratum is Stratum.NARRATIVE]
+    assert len(narrative) == 1
+    assert set(narrative[0].gold_spans) == set(spans)
+    assert "1.275" not in narrative[0].text
+    assert "3.929" not in narrative[0].text

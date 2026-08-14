@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 
-from disclosure_rag.labels.ledger import FactLedger
+from disclosure_rag.labels.ledger import FactLedger, ProsePair
 from disclosure_rag.periods import describe_period
 from disclosure_rag.provenance import Span
 
@@ -202,12 +202,23 @@ def questions_from_ledger(
             )
         )
 
+    # One sentence can restate two figures, typically this year and last:
+    # "... in Hoehe von TEUR -1.275 (VJ: TEUR -3.929)". Both are separately
+    # tagged and both pairs are genuine, but stripping the figures leaves one
+    # query that cannot distinguish them. Scored as two questions it would mark
+    # a retriever wrong whichever year it found, so they merge into one question
+    # whose gold is both locations. This is the same ambiguity the router
+    # abstains on, handled the way the benchmark has to handle it.
+    merged: dict[str, list[ProsePair]] = {}
     for pair in ledger.prose_pairs:
         if not pair.confirmed:
             continue
         query = strip_figures(pair.sentence)
-        if not query:
-            continue
+        if query:
+            merged.setdefault(query, []).append(pair)
+
+    for query, pairs in merged.items():
+        pair = pairs[0]
         questions.append(
             Question(
                 question_id=f"{ledger.document_id}:nr:{pair.fact_id}",
@@ -221,7 +232,7 @@ def questions_from_ledger(
                 # reported Recall@1 of 0.93, which is the sound a broken metric
                 # makes. What is worth measuring is the bridge from narrative
                 # wording to where the figure is authoritatively tagged.
-                gold_spans=[pair.gold_span],
+                gold_spans=[item.gold_span for item in pairs],
                 gold_value=str(pair.value),
                 source_fact_id=pair.fact_id,
             )
