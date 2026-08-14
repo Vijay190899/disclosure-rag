@@ -195,7 +195,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 219 tests.
+Docker, GitHub Actions, mypy strict, 221 tests.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -207,7 +207,7 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 219 tests
+make check                   # lint, typecheck, 221 tests
 
 make fetch                   # download ESEF report packages into data/filings
 make labels                  # build the fact ledgers from them
@@ -252,8 +252,10 @@ Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
 - **The narrative path is governed by abstention rather than measured.** A gold set for it needs
   reviewed question and answer pairs. Mechanical extraction produces candidates but cannot promote
   them: a statement row and a narrative sentence restating it contain the same label and the same
-  figure, so the available signals do not separate them. The build exports 495 ranked candidates and
-  `make review` confirms them one keystroke at a time, highest-likelihood first.
+  figure, so the available signals do not separate them. `make review` ranks the candidates by how
+  much they read like a person writing rather than a table row, and confirms them one keystroke at a
+  time. On this corpus that queue is 28 candidates, so the stratum it produces would be small and
+  would be reported with its n rather than as a headline.
 - **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
   but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
   One filing in this corpus declares none at all. Wordings are pooled across the corpus, which gives

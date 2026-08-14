@@ -18,7 +18,7 @@ from disclosure_rag.labels.facts import LxmlFactSource
 from disclosure_rag.labels.ledger import FactLedger, build, write_index, write_review_csv
 from disclosure_rag.labels.locate import confirm_by_text, locate_facts, render_to_pdf
 from disclosure_rag.labels.taxonomy import load_labels
-from disclosure_rag.versioning import hash_file
+from disclosure_rag.versioning import hash_file, label_plane_version
 
 
 def _page_blocks(pdf_path: Path) -> list[list[str]]:
@@ -56,11 +56,17 @@ def build_one(
     # rebuild to pick up one new filing is the difference between a job that runs
     # nightly and one that does not. Keyed on the content hash rather than a
     # timestamp, because a re-download with the same bytes is not a change.
+    #
+    # The builder's own version is part of the key. Without it, changing how
+    # facts are extracted leaves every ledger stale and says "unchanged,
+    # skipping" while doing it, which is the worst way to be wrong: silent, and
+    # it looks like success.
     existing = work / "ledger.json"
     current_hash = hash_file(report)
+    builder = label_plane_version()
     if not force and existing.exists() and (work / "document.pdf").exists():
         previous = FactLedger.read(existing)
-        if previous.content_hash == current_hash:
+        if previous.content_hash == current_hash and previous.builder_version == builder:
             print(f"[labels] {document_id}: unchanged, skipping")
             return previous
 
@@ -101,6 +107,7 @@ def build_one(
         confirmation,
         concept_labels,
         content_hash=current_hash,
+        builder_version=builder,
     )
     ledger.write(work / "ledger.json")
     print(f"[labels] {document_id}: {len(ledger.prose_pairs)} prose pairs")

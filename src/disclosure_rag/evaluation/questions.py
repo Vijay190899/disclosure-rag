@@ -83,6 +83,22 @@ def humanise_concept(concept: str) -> str:
     return re.sub(r"\s+", " ", words)
 
 
+FIGURE = re.compile(r"-?\d[\d.,]*\s*(?:%|Mio\.?|Mrd\.?|Tsd\.?|TEUR|EUR|€)?")
+
+
+def strip_figures(sentence: str) -> str:
+    """The sentence with its numbers removed, for use as a query.
+
+    Using the sentence verbatim would hand the retriever the answer: the digits
+    it is meant to find are the strongest lexical signal in it, and every hit
+    would be the sentence itself rather than the figure it refers to. What is
+    left is the information need in the filing's own narrative wording, which is
+    the thing worth measuring, because it differs from the statement row's
+    wording and that gap is the whole difficulty.
+    """
+    return " ".join(FIGURE.sub(" ", sentence).split()).strip(" ,.;:")
+
+
 def questions_from_ledger(
     ledger: FactLedger,
     limit_per_document: int = 40,
@@ -189,12 +205,22 @@ def questions_from_ledger(
     for pair in ledger.prose_pairs:
         if not pair.confirmed:
             continue
+        query = strip_figures(pair.sentence)
+        if not query:
+            continue
         questions.append(
             Question(
                 question_id=f"{ledger.document_id}:nr:{pair.fact_id}",
                 document_id=ledger.document_id,
-                text=pair.sentence,
+                text=query,
                 stratum=Stratum.NARRATIVE,
+                # Gold is the tagged fact, not the sentence the query came from.
+                # Crediting a system for returning that sentence would be
+                # circular: the query is the sentence, so finding it is
+                # guaranteed and measures nothing. Scored that way the stratum
+                # reported Recall@1 of 0.93, which is the sound a broken metric
+                # makes. What is worth measuring is the bridge from narrative
+                # wording to where the figure is authoritatively tagged.
                 gold_spans=[pair.gold_span],
                 gold_value=str(pair.value),
                 source_fact_id=pair.fact_id,

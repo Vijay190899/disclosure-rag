@@ -94,3 +94,16 @@ class Snapshot(BaseModel):
 
     def version_of(self, document_id: str) -> str:
         return self.documents.get(document_id, "")
+
+
+def label_plane_version() -> str:
+    """Content hash of the code that builds a fact ledger.
+
+    Derived rather than assigned, for the same reason document versions are: a
+    number a person remembers to bump is one that eventually does not get
+    bumped, and the failure is silent. Sorted before hashing so file iteration
+    order cannot move it.
+    """
+    directory = Path(__file__).parent / "labels"
+    sources = sorted(path.read_text(encoding="utf-8") for path in directory.glob("*.py"))
+    return hash_text("\n".join(sources))

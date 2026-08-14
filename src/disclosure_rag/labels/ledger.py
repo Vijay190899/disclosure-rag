@@ -42,6 +42,20 @@ MAX_DIGIT_RATIO = 0.20
 MATCH_TOLERANCE = Decimal("0.005")
 SCALE_CANDIDATES = (Decimal(1), Decimal(1_000), Decimal(1_000_000), Decimal(1_000_000_000))
 
+# The scale a sentence states, when it states one. Trying all four scales on a
+# figure that says "Mio." multiplies the chance of a coincidence by four for no
+# gain, and it is how "236,6 Mio." came to be paired with a fact of 236000.
+SCALE_AFTER = (
+    (re.compile(r"^[\s.]*(?:Mrd|Milliarden)\b", re.IGNORECASE), Decimal(1_000_000_000)),
+    (re.compile(r"^[\s.]*(?:Mio|Millionen)\b", re.IGNORECASE), Decimal(1_000_000)),
+    (re.compile(r"^[\s.]*(?:Tsd|Tausend)\b", re.IGNORECASE), Decimal(1_000)),
+)
+SCALE_BEFORE = (
+    (re.compile(r"\bMrd\.?\s*(?:EUR|€)?\s*$", re.IGNORECASE), Decimal(1_000_000_000)),
+    (re.compile(r"\bMio\.?\s*(?:EUR|€)?\s*$", re.IGNORECASE), Decimal(1_000_000)),
+    (re.compile(r"\b(?:TEUR|Tsd)\.?\s*(?:EUR|€)?\s*$", re.IGNORECASE), Decimal(1_000)),
+)
+
 # Matching on value alone produces coincidences: in a document holding hundreds
 # of facts, a bare "149" will equal something. A figure needs enough significant
 # digits for the match to carry information. Measured on the Austrian corpus,
@@ -103,6 +117,10 @@ class FactLedger(BaseModel):
         default="",
         description="Hash of the source filing. An amended filing gets a different one.",
     )
+    builder_version: str = Field(
+        default="",
+        description="Hash of the label-plane code that produced this. Derived, not assigned.",
+    )
     facts: list[LocatedFact] = Field(default_factory=list)
     prose_pairs: list[ProsePair] = Field(default_factory=list)
     coverage: float = Field(default=0.0, description="Share of facts that were located")
@@ -155,20 +173,44 @@ def is_specific(mention: str) -> bool:
     return sum(character.isdigit() for character in mention) >= MIN_SIGNIFICANT_DIGITS
 
 
-def resolve_to_fact(value: Decimal, facts: list[Fact]) -> Fact | None:
+def scales_for(before: str, after: str) -> tuple[Decimal, ...]:
+    """The scales worth trying for a figure, given the words around it.
+
+    "236,6 Mio." can only mean 236600000, and "TEUR 532" can only mean 532000.
+    Falls back to every scale when the sentence names none, which is the case
+    where a coincidental match is most likely and the review queue earns its
+    keep.
+    """
+    for pattern, scale in SCALE_AFTER:
+        if pattern.match(after):
+            return (scale,)
+    for pattern, scale in SCALE_BEFORE:
+        if pattern.search(before):
+            return (scale,)
+    return SCALE_CANDIDATES
+
+
+def resolve_to_fact(
+    value: Decimal, facts: list[Fact], scales: tuple[Decimal, ...] = SCALE_CANDIDATES
+) -> Fact | None:
     """Find the tagged fact a prose figure restates, if any.
 
-    Tries the figure as written and at each common scale, because prose says
-    "1,2 Mrd" where the statement tags 1200000000.
+    The **closest** fact within tolerance, not the first one found. Those differ
+    more often than they sound like they would: a filing tags profit for the
+    year several times over, and "343,8 Mio." was being paired with 345244000
+    while 343793000 sat in the same ledger. First-match-wins produced a pair
+    that a reviewer has to reject, and worse, one they might not notice.
     """
+    best: Fact | None = None
+    best_error = MATCH_TOLERANCE
     for fact in facts:
         if fact.value == 0:
             continue
-        for scale in SCALE_CANDIDATES:
-            scaled = value * scale
-            if abs(scaled - fact.value) / abs(fact.value) < MATCH_TOLERANCE:
-                return fact
-    return None
+        for scale in scales:
+            error = abs(value * scale - fact.value) / abs(fact.value)
+            if error < best_error:
+                best, best_error = fact, error
+    return best
 
 
 def names_concept(sentence: str, label: str) -> bool:
@@ -224,7 +266,11 @@ def extract_prose_pairs(
                 sentence = sentence_around(block, match.start())
                 if not is_prose(sentence):
                     continue
-                fact = resolve_to_fact(value, facts)
+                scales = scales_for(
+                    block[max(0, match.start() - 12) : match.start()],
+                    block[match.end() : match.end() + 14],
+                )
+                fact = resolve_to_fact(value, facts, scales)
                 if fact is None or fact.fact_id not in located:
                     continue
                 pairs.append(
@@ -253,6 +299,7 @@ def build(
     confirmation: Confirmation | None = None,
     concept_labels: dict[str, str] | None = None,
     content_hash: str = "",
+    builder_version: str = "",
 ) -> FactLedger:
     """Join extracted facts with their locations into a ledger."""
     rows = [
@@ -269,6 +316,7 @@ def build(
     return FactLedger(
         document_id=document_id,
         content_hash=content_hash,
+        builder_version=builder_version,
         facts=rows,
         prose_pairs=pairs,
         coverage=len(rows) / len(facts) if facts else 0.0,
