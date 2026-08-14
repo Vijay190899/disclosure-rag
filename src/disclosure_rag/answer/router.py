@@ -28,26 +28,146 @@ YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 MIN_LABEL_COVERAGE = 0.8
 MIN_LABEL_TOKENS = 1
 
+# And the question must be substantially the label, not merely contain it.
+#
+# Containment on its own is not identification. "Erwerb von Sachanlagen" asks
+# about a cash flow, and it contains the label "Sachanlagen", so a rule that
+# only looks for the label returns the balance sheet carrying amount with full
+# confidence. That is the exact failure this system claims not to have: a
+# confidently wrong figure with an exact citation attached to it. Requiring the
+# label to account for most of what the question actually names rules it out.
+MIN_QUESTION_COVERAGE = 0.6
+
+# Question framing rather than anything a filing tags. Kept short and literal:
+# a long stopword list starts silently discarding words that are part of a
+# concept name in some filing.
+FRAMING = frozenset(
+    {
+        "wie",
+        "hoch",
+        "war",
+        "waren",
+        "ist",
+        "sind",
+        "der",
+        "die",
+        "das",
+        "des",
+        "dem",
+        "den",
+        "ein",
+        "eine",
+        "einer",
+        "von",
+        "vom",
+        "und",
+        "oder",
+        "als",
+        "aus",
+        "auf",
+        "bei",
+        "mit",
+        "fur",
+        "für",
+        "zum",
+        "zur",
+        "per",
+        "sich",
+        "wurde",
+        "wurden",
+        "betrug",
+        "betrugen",
+        "hohe",
+        "höhe",
+        "wert",
+        # Period framing. "im Geschäftsjahr 2022" says which year, not which
+        # figure, and counting it as something the question names made every
+        # single-word concept look half specified.
+        "geschaftsjahr",
+        "geschäftsjahr",
+        "jahr",
+        "jahre",
+        "zeitraum",
+        "stichtag",
+        "bis",
+        "what",
+        "was",
+        "the",
+        "for",
+        "and",
+        "how",
+        "much",
+        "value",
+    }
+)
+
+
+def content_terms(question: str) -> set[str]:
+    """What the question names, with the framing and the period taken out."""
+    return {
+        term
+        for term in tokenize(question)
+        if len(term) > 2 and term not in FRAMING and not term[0].isdigit()
+    }
+
 
 @dataclass(frozen=True)
 class ConceptIndex:
     """Tagged concepts available for one document, keyed for lookup.
 
-    Built from the fact ledger, so it reflects exactly what the filer tagged.
+    Periods come only from this document's own facts, so a pooled label can
+    never make the router claim a period the filing does not report.
+
+    A concept carries several labels rather than one. Issuers must label their
+    own extension concepts, but standard IFRS labels come from the official
+    taxonomy, which packages reference rather than bundle. One filing in this
+    corpus declares no labels at all, which left 323 tagged facts unreachable by
+    the structured path. Borrowing another issuer's wording for the same concept
+    fixes that, and keeping both wordings means the filer's own is still
+    matched.
     """
 
-    labels: dict[str, str] = field(default_factory=dict)
+    labels: dict[str, tuple[str, ...]] = field(default_factory=dict)
     periods: dict[str, set[str]] = field(default_factory=dict)
 
     @classmethod
-    def from_ledger(cls, ledger: object) -> ConceptIndex:
+    def from_ledger(cls, ledger: object, pooled: dict[str, set[str]] | None = None) -> ConceptIndex:
         from disclosure_rag.labels.ledger import FactLedger
 
         assert isinstance(ledger, FactLedger)
         periods: dict[str, set[str]] = {}
         for row in ledger.facts:
             periods.setdefault(row.fact.concept, set()).add(row.fact.period)
-        return cls(labels=dict(ledger.concept_labels), periods=periods)
+
+        labels: dict[str, tuple[str, ...]] = {}
+        for concept in periods:
+            wordings = set(pooled.get(concept, set())) if pooled else set()
+            own = ledger.concept_labels.get(concept)
+            if own:
+                wordings.add(own)
+            if wordings:
+                labels[concept] = tuple(sorted(wordings))
+        return cls(labels=labels, periods=periods)
+
+
+def pool_labels(ledgers: dict[str, object]) -> dict[str, set[str]]:
+    """Every wording any filing in the corpus declared, per concept.
+
+    Extension concepts are namespaced per issuer, so they do not collide across
+    filings and pooling them is a no-op rather than a hazard. Where two issuers
+    word the same standard concept differently, both wordings are kept: a reader
+    may use either, and a label that matches two concepts is already handled as
+    ambiguous downstream rather than resolved arbitrarily.
+    """
+    from disclosure_rag.labels.ledger import FactLedger
+
+    pooled: dict[str, set[str]] = {}
+    for ledger in ledgers.values():
+        assert isinstance(ledger, FactLedger)
+        for concept, label in ledger.concept_labels.items():
+            if label:
+                pooled.setdefault(concept, set()).add(label)
+    return pooled
 
 
 @dataclass(frozen=True)
@@ -86,11 +206,20 @@ def _match_period(wanted: set[str], available: set[str]) -> str:
     return ""
 
 
-def route_question(question: str, index: ConceptIndex) -> RoutingDecision:
-    """Route to the structured path when a tagged concept and period are both named."""
+def route_question(
+    question: str,
+    index: ConceptIndex,
+    min_question_coverage: float = MIN_QUESTION_COVERAGE,
+) -> RoutingDecision:
+    """Route to the structured path when a tagged concept and period are both named.
+
+    ``min_question_coverage`` is a parameter so the threshold can be swept
+    against the benchmark rather than asserted.
+    """
     question_terms = set(tokenize(question))
     if not question_terms:
         return RoutingDecision(Route.PASSAGE, reason="empty question")
+    asked = content_terms(question)
 
     # Longest matching label wins, so "Summe Zinsaufwendungen" beats "Summe".
     # All concepts tying at the best score are kept: a label can be declared for
@@ -99,23 +228,55 @@ def route_question(question: str, index: ConceptIndex) -> RoutingDecision:
     # a confidently wrong answer.
     best_score = 0
     matches: list[tuple[str, str]] = []
-    for concept, label in sorted(index.labels.items()):
-        label_terms = [term for term in tokenize(label) if len(term) > 2]
-        if len(label_terms) < MIN_LABEL_TOKENS:
+    for concept, wordings in sorted(index.labels.items()):
+        # A concept scores once, on its best-matching wording. Scoring each
+        # wording separately would list the same concept twice and read as
+        # ambiguity where there is none.
+        best_for_concept = 0
+        best_label = ""
+        best_covered = -1
+        for label in wordings:
+            label_terms = [term for term in tokenize(label) if len(term) > 2]
+            if len(label_terms) < MIN_LABEL_TOKENS:
+                continue
+            present = sum(1 for term in label_terms if term in question_terms)
+            if present / len(label_terms) < MIN_LABEL_COVERAGE:
+                continue
+            # Ranked by how much of the label the question contains, and the
+            # wording kept is the one that accounts for most of the question.
+            # Those differ: a filing's own long wording and another issuer's
+            # short one can both match, and reporting the short one would make
+            # a fully specified question look underspecified.
+            covered = len(asked & set(label_terms))
+            if (present, covered) > (best_for_concept, best_covered):
+                best_for_concept, best_covered, best_label = present, covered, label
+        if not best_for_concept:
             continue
-        present = sum(1 for term in label_terms if term in question_terms)
-        if present / len(label_terms) < MIN_LABEL_COVERAGE:
-            continue
-        if present > best_score:
-            best_score, matches = present, [(concept, label)]
-        elif present == best_score:
-            matches.append((concept, label))
+        if best_for_concept > best_score:
+            best_score, matches = best_for_concept, [(concept, best_label)]
+        elif best_for_concept == best_score:
+            matches.append((concept, best_label))
 
     if not matches:
         return RoutingDecision(Route.PASSAGE, reason="no tagged concept named")
 
     concepts = tuple(concept for concept, _ in matches)
     label = matches[0][1]
+
+    # The question has to be about the label, not merely contain it. Checked
+    # against the best match, since every tied match scored the same.
+    if asked:
+        covered = len(asked & {term for term in tokenize(label) if len(term) > 2})
+        if covered / len(asked) < min_question_coverage:
+            return RoutingDecision(
+                Route.PASSAGE,
+                concepts=concepts,
+                label=label,
+                reason=(
+                    f"the question names more than the tagged concept {label!r}, "
+                    "so it is not asking for that figure"
+                ),
+            )
     wanted = _periods_in(question)
     if not wanted:
         return RoutingDecision(

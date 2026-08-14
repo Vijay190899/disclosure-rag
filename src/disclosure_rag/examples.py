@@ -24,21 +24,31 @@ SEED = 20240817
 ATTEMPTS = 40
 
 
-def candidates(ledger: FactLedger) -> list[str]:
+def candidates(ledger: FactLedger, pooled: dict[str, set[str]] | None = None) -> list[str]:
     """Figure questions this filing plausibly supports, in a stable order.
 
     Concepts tagged more than once for the same period are skipped: those are
     the dimensionally ambiguous ones the system declines by design, and offering
     one as an example would advertise an abstention.
+
+    ``pooled`` supplies wordings declared by other filings, matching what the
+    router will accept. Without it the filing that declares no labels of its own
+    would be offered nothing, which is the filing whose examples matter most.
     """
+
+    def wordings(concept: str) -> list[str]:
+        own = ledger.concept_labels.get(concept, "")
+        borrowed = pooled.get(concept, set()) if pooled else set()
+        return sorted({label for label in {own, *borrowed} if label})
+
     values: dict[tuple[str, str], set[str]] = {}
     for row in ledger.facts:
         fact = row.fact
-        if fact.concept in ledger.concept_labels and fact.period:
+        if fact.period and wordings(fact.concept):
             values.setdefault((fact.concept, fact.period), set()).add(str(fact.value))
 
     unambiguous = sorted(
-        (ledger.concept_labels[concept], period)
+        (wordings(concept)[0], period)
         for (concept, period), distinct in values.items()
         if len(distinct) == 1
     )
@@ -51,10 +61,11 @@ def working_examples(
     ledger: FactLedger,
     ask: Callable[[str], Answer],
     limit: int = 3,
+    pooled: dict[str, set[str]] | None = None,
 ) -> list[str]:
     """Candidates filtered down to those that answer with an exact citation."""
     kept: list[str] = []
-    for question in candidates(ledger):
+    for question in candidates(ledger, pooled):
         if len(kept) == limit:
             break
         answer = ask(question)

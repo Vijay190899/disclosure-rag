@@ -14,13 +14,19 @@ for.
 
 from disclosure_rag.answer.models import Answer, Citation, Route
 from disclosure_rag.answer.pipeline import AnswerPipeline
-from disclosure_rag.answer.router import ConceptIndex, RoutingDecision, route_question
+from disclosure_rag.answer.router import (
+    ConceptIndex,
+    RoutingDecision,
+    pool_labels,
+    route_question,
+)
 
 __all__ = [
     "Answer",
     "AnswerPipeline",
     "Citation",
     "ConceptIndex",
+    "pool_labels",
     "Route",
     "RoutingDecision",
     "route_question",

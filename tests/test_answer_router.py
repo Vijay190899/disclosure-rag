@@ -5,10 +5,10 @@ from disclosure_rag.answer.router import ConceptIndex, route_question
 
 INDEX = ConceptIndex(
     labels={
-        "ifrs-full:Assets": "Bilanzsumme",
-        "ifrs-full:Revenue": "Umsatzerlöse",
-        "ifrs-full:InterestExpense": "Summe Zinsaufwendungen",
-        "x:Summe": "Summe",
+        "ifrs-full:Assets": ("Bilanzsumme",),
+        "ifrs-full:Revenue": ("Umsatzerlöse",),
+        "ifrs-full:InterestExpense": ("Summe Zinsaufwendungen",),
+        "x:Summe": ("Summe",),
     },
     periods={
         "ifrs-full:Assets": {"instant:2022-12-31", "instant:2021-12-31"},
@@ -76,4 +76,100 @@ def test_an_empty_question_goes_to_passages() -> None:
 
 def test_an_empty_index_never_routes_to_the_ledger() -> None:
     decision = route_question("Bilanzsumme zum 31.12.2022", ConceptIndex())
+    assert decision.route is Route.PASSAGE
+
+
+def test_a_pooled_wording_reaches_a_concept_the_filer_did_not_label() -> None:
+    """One issuer's wording, another issuer's untagged concept.
+
+    This is the case the corpus actually contains: a filing that references the
+    official taxonomy rather than bundling labels has no wording of its own, so
+    without pooling its tagged figures are unreachable.
+    """
+    index = ConceptIndex(
+        labels={"ifrs-full:Assets": ("Bilanzsumme", "Summe Aktiva")},
+        periods={"ifrs-full:Assets": {"instant:2022-12-31"}},
+    )
+    decision = route_question("Wie hoch war Summe Aktiva zum 31.12.2022?", index)
+    assert decision.route is Route.LEDGER
+    assert decision.concept == "ifrs-full:Assets"
+
+
+def test_two_wordings_for_one_concept_are_not_ambiguity() -> None:
+    """Ambiguity means two concepts, not two names for one.
+
+    Scoring each wording separately would list the same concept twice and
+    abstain on a question that identifies exactly one figure.
+    """
+    index = ConceptIndex(
+        labels={"ifrs-full:Assets": ("Bilanzsumme", "Bilanzsumme gesamt")},
+        periods={"ifrs-full:Assets": {"instant:2022-12-31"}},
+    )
+    decision = route_question("Wie hoch war Bilanzsumme gesamt zum 31.12.2022?", index)
+    assert decision.route is Route.LEDGER
+    assert decision.concept == "ifrs-full:Assets"
+
+
+def test_a_pooled_label_cannot_invent_a_period() -> None:
+    """Borrowing a wording must not borrow a filing's reporting periods."""
+    index = ConceptIndex(
+        labels={"ifrs-full:Assets": ("Bilanzsumme",)},
+        periods={"ifrs-full:Assets": {"instant:2022-12-31"}},
+    )
+    decision = route_question("Wie hoch war Bilanzsumme zum 31.12.2019?", index)
+    assert decision.route is Route.PASSAGE
+    assert "not tagged" in decision.reason
+
+
+def test_a_label_shared_by_two_concepts_is_still_ambiguous() -> None:
+    index = ConceptIndex(
+        labels={
+            "ifrs-full:Inventories": ("Vorräte",),
+            "ifrs-full:AdjustmentsForInventories": ("Vorräte",),
+        },
+        periods={
+            "ifrs-full:Inventories": {"instant:2022-12-31"},
+            "ifrs-full:AdjustmentsForInventories": {"instant:2022-12-31"},
+        },
+    )
+    decision = route_question("Wie hoch war Vorräte zum 31.12.2022?", index)
+    assert decision.concept == ""
+    assert len(decision.concepts) == 2
+
+
+def test_a_question_that_names_more_than_the_label_does_not_route() -> None:
+    """The failure this guards: "Erwerb von Sachanlagen" asks about a cash
+    flow and contains the label "Sachanlagen", so containment alone returns the
+    balance sheet carrying amount with full confidence and an exact citation.
+    """
+    index = ConceptIndex(
+        labels={"ifrs-full:PropertyPlantAndEquipment": ("Sachanlagen",)},
+        periods={"ifrs-full:PropertyPlantAndEquipment": {"instant:2022-12-31"}},
+    )
+    decision = route_question("Wie hoch war Erwerb von Sachanlagen zum 31.12.2022?", index)
+    assert decision.route is Route.PASSAGE
+    assert "names more than" in decision.reason
+
+
+def test_period_framing_is_not_something_the_question_names() -> None:
+    """ "im Geschäftsjahr 2022" says which year, not which figure."""
+    index = ConceptIndex(
+        labels={"ifrs-full:Revenue": ("Umsatzerlöse",)},
+        periods={"ifrs-full:Revenue": {"2022-01-01/2022-12-31"}},
+    )
+    decision = route_question("Wie hoch war Umsatzerlöse im Geschäftsjahr 2022?", index)
+    assert decision.route is Route.LEDGER
+
+
+def test_a_qualifier_the_filing_does_not_tag_falls_back_rather_than_guessing() -> None:
+    """Falling back to retrieval is the designed degradation. Answering with the
+    group figure because the question said "des Konzerns" would not be.
+    """
+    index = ConceptIndex(
+        labels={"ifrs-full:Revenue": ("Umsatzerlöse",)},
+        periods={"ifrs-full:Revenue": {"2022-01-01/2022-12-31"}},
+    )
+    decision = route_question(
+        "Wie hoch waren die Umsatzerlöse des Segments Karton im Geschäftsjahr 2022?", index
+    )
     assert decision.route is Route.PASSAGE

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Owner** | Vijay Ananth Karunanithi |
-| **Version** | 1.1.0 |
-| **Last updated** | 2026-08-14 |
+| **Version** | 1.2.0 |
+| **Last updated** | 2026-08-15 |
 
 Sections 5 and 6 define contracts that everything downstream couples to, so they are updated in the
 same change set that alters them. The rest is updated at release boundaries.
@@ -44,6 +44,13 @@ That makes the usual architecture the wrong one for tagged figures. Retrieval pu
 first for 35% of figure questions; a statement row carries several periods' values with the
 distinguishing column header in a different text block, so a linearised passage does not say which
 value belongs to which year; and the citation becomes a prediction rather than a fact.
+
+The routing rule is symmetric on the label: the question must contain the concept's label, and the
+label must account for most of what the question names. Containment alone is not identification, and
+the asymmetric version returned a balance sheet figure for a cash flow question that happened to
+contain the balance sheet label. Wordings are pooled across the corpus so a filing that references
+the official taxonomy rather than bundling labels still has a structured path; periods are never
+pooled.
 
 Full reasoning and the measurements in
 [ADR-0001](adr/0001-route-structured-and-unstructured-separately.md).
@@ -244,11 +251,14 @@ supported behind the `Retriever` protocol for corpora that outgrow one machine.
 
 ## 11. Known limitations
 
-- **Three filings.** Enough for the benchmark to be meaningful, not enough to claim generality.
-- **Retrieval quality is moderate.** Recall@10 of 0.692 on figure questions is a baseline. It matters
+- **Eight filings.** Enough for the benchmark to be meaningful, not enough to claim generality.
+- **Retrieval quality is moderate.** Recall@10 of 0.678 on figure questions is a baseline. It matters
   less than it appears because those questions route to the ledger, but it bounds the narrative path.
 - **The narrative path is governed by abstention rather than measured**, pending a gold set for
   qualitative answers.
 - **Concept label coverage varies by filer**, so the structured path reaches fewer concepts for issuers
-  who reference the official taxonomy instead of declaring labels. Labels are pooled across the corpus
-  to reduce this.
+  who reference the official taxonomy instead of declaring labels. One filing here declares none.
+  Wordings are pooled across the corpus to cover that, which means a question may have to use another
+  issuer's words. Loading the official taxonomy's label linkbase would remove the need to borrow.
+- **A question naming more than the concept falls back to retrieval**, so the structured path is
+  reached more reliably by plainly phrased questions than by conversational ones.

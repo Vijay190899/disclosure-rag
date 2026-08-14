@@ -30,18 +30,18 @@ tags.
 
 Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
 
-**End to end**, 319 generated cases over eight Austrian filings:
+**End to end**, 393 generated cases over eight Austrian filings:
 
 | Measure | n | Result |
 |---|---|---|
-| Routing accuracy, tagged figures | 140 | **0.993** |
-| Answer exact match, tagged figures | 140 | **0.936** |
-| Abstention recall, unanswerable questions | 179 | **0.955** |
-| Abstention precision | 179 | **0.950** |
-| False answer rate on unanswerable questions | 179 | **0.045** |
-| Wrong-period traps survived | 70 | **1.000** |
-| Dimensional ambiguity detected | 39 | **1.000** |
-| Latency p50 / p95 | 319 | **0.4 ms / 2.4 ms** |
+| Routing accuracy, tagged figures | 160 | **1.000** |
+| Answer exact match, tagged figures | 160 | **0.963** |
+| Abstention recall, unanswerable questions | 233 | **0.970** |
+| Abstention precision | 233 | **0.974** |
+| False answer rate on unanswerable questions | 233 | **0.030** |
+| Wrong-period traps survived | 80 | **1.000** |
+| Dimensional ambiguity detected | 73 | **1.000** |
+| Latency p50 / p95 | 393 | **0.7 ms / 3.2 ms** |
 
 Two of those rows are the ones worth reading.
 
@@ -52,7 +52,16 @@ knowing the concept from knowing the period. The system never returns a figure f
 because equity is reported per component and revenue per segment, and separately because one German
 label can be declared for two different concepts: `Vorräte` is both the balance-sheet item and its
 cash-flow adjustment. In both cases the question does not identify a single figure, so the system
-declines and shows the candidates rather than picking one. It catches all 39.
+declines and shows the candidates rather than picking one. It catches all 73.
+
+**Containment is not identification**, and this cost real accuracy before it was fixed. The router
+originally asked whether a question contains a tagged concept's label. *"Wie hoch war Erwerb von
+Sachanlagen"* asks about a cash flow and contains the label *"Sachanlagen"*, so it returned the
+balance sheet carrying amount at full confidence with an exact citation attached, which is precisely
+the failure this system claims not to have. The rule is now symmetric: the label also has to account
+for most of what the question names. That took the false answer rate from 0.069 to 0.030 at no cost
+to exact match. A question with extra qualifiers the filing does not tag now falls back to retrieval
+instead, which is degradation rather than error.
 
 **Retrieval**, BM25 over 1829 chunks, scored against bounding boxes taken from the filings' own tags:
 
@@ -88,15 +97,15 @@ default. [ADR-0005](docs/adr/0005-bm25-default-no-agent-framework.md).
 located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
 for the same figure.
 
-**Is the confidence number worth anything?** Expected calibration error over the 139 answers given at
+**Is the confidence number worth anything?** Expected calibration error over the 161 answers given at
 the shipped threshold:
 
 | Confidence band | n | mean confidence | accuracy | gap |
 |---|---|---|---|---|
 | 0.8 to 0.9 | 3 | 0.800 | 0.000 | **+0.800** |
-| 0.9 to 1.0 | 136 | 1.000 | 0.963 | +0.037 |
+| 0.9 to 1.0 | 158 | 1.000 | 0.975 | +0.025 |
 
-**ECE 0.053.** The structured path claims 1.0 and is right 96.3% of the time. The three passage
+**ECE 0.040.** The structured path claims 1.0 and is right 97.5% of the time. The three passage
 answers above the threshold are confidently wrong, which is the dangerous direction because those are
 the answers a reader would not check, and the worst-band figure is reported alongside the average
 precisely so one good number cannot hide three bad ones.
@@ -108,10 +117,10 @@ not a prediction that declining was right, so including them would measure nothi
 
 | Threshold | Exact match on answerable | False answer rate on unanswerable |
 |---|---|---|
-| 0.50 | 0.936 | 0.358 |
-| 0.70 | 0.936 | 0.084 |
-| **0.80** | **0.936** | **0.045** |
-| 0.90 | 0.936 | 0.028 |
+| 0.50 | 0.963 | 0.258 |
+| 0.70 | 0.963 | 0.064 |
+| **0.80** | **0.963** | **0.030** |
+| 0.90 | 0.963 | 0.017 |
 
 0.8 is the shipped setting. Exact match does not move across the sweep because tagged figures come
 through the structured layer at full confidence, so a passage-path threshold cannot affect them. What
@@ -186,7 +195,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 212 tests.
+Docker, GitHub Actions, mypy strict, 219 tests.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -198,7 +207,7 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 212 tests
+make check                   # lint, typecheck, 219 tests
 
 make fetch                   # download ESEF report packages into data/filings
 make labels                  # build the fact ledgers from them
@@ -247,7 +256,14 @@ Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
   `make review` confirms them one keystroke at a time, highest-likelihood first.
 - **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
   but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
-  Labels are pooled across the corpus to reduce this.
+  One filing in this corpus declares none at all. Wordings are pooled across the corpus, which gives
+  that filing a structured path it otherwise would not have, and it means a question may have to be
+  phrased in another issuer's words. Loading the official taxonomy's label linkbase would remove the
+  need to borrow.
+- **A question that names more than the concept falls back to retrieval.** Asking for revenue "des
+  Konzerns" or "des Segments Karton" when the filing tags neither qualifier routes to passages rather
+  than returning the unqualified figure. That is the intended trade, and it does mean the structured
+  path is reached by plainly phrased questions more reliably than by conversational ones.
 
 ## Licence
 

@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from disclosure_rag.answer.models import Route, Status
 from disclosure_rag.answer.pipeline import AnswerPipeline
+from disclosure_rag.answer.router import pool_labels
 from disclosure_rag.evaluation.calibration import Calibration, calibrate
 from disclosure_rag.labels.ledger import FactLedger
 from disclosure_rag.periods import phrase_question
@@ -114,17 +115,29 @@ class BenchmarkReport(BaseModel):
 
 
 def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[Case]:
-    """Generate the three question classes from the ledgers."""
+    """Generate the three question classes from the ledgers.
+
+    Labels are pooled across the corpus the same way the serving router pools
+    them. Asking only with a filing's own wordings would leave the filing that
+    declares none untested, which is precisely the filing where the structured
+    path is hardest.
+    """
     rng = random.Random(SEED)
     cases: list[Case] = []
     document_ids = sorted(ledgers)
+    pooled = pool_labels(dict(ledgers))
 
     for document_id in document_ids:
         ledger = ledgers[document_id]
+        wordings = {
+            concept: sorted(pooled.get(concept, set()) | {ledger.concept_labels.get(concept, "")})
+            for concept in {row.fact.concept for row in ledger.facts}
+        }
+        wordings = {
+            concept: [label for label in labels if label] for concept, labels in wordings.items()
+        }
         labelled = [
-            row
-            for row in ledger.facts
-            if row.fact.concept in ledger.concept_labels and row.fact.period
+            row for row in ledger.facts if wordings.get(row.fact.concept) and row.fact.period
         ]
         if not labelled:
             continue
@@ -139,7 +152,9 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
         pool: list[tuple[str, str, str]] = []
         ambiguous: list[tuple[str, str]] = []
         for (concept, period), distinct in values.items():
-            label = ledger.concept_labels[concept]
+            # The filer's own wording when it has one, so a question reads the
+            # way that filing writes it. Sorted for determinism otherwise.
+            label = ledger.concept_labels.get(concept) or wordings[concept][0]
             if len(distinct) > 1:
                 ambiguous.append((label, period))
             else:
@@ -185,12 +200,26 @@ def build_cases(ledgers: dict[str, FactLedger], per_document: int = 20) -> list[
             )
 
         # Unanswerable: another filing's concept, which this one did not tag.
+        #
+        # The test is "did not tag", not "did not label". Those used to coincide
+        # closely enough to be interchangeable and pooling separated them: a
+        # filing can tag a concept while declaring no wording for it, and a
+        # borrowed wording then reaches a figure that really is in the filing.
+        # Keeping the old filter would have counted correct answers as false
+        # ones, on the filing with no labels most of all.
+        tagged = {row.fact.concept for row in ledger.facts}
+        reachable = {
+            label
+            for concept in tagged
+            for label in (pooled.get(concept, set()) | {ledger.concept_labels.get(concept, "")})
+            if label
+        }
         others = [other for other in document_ids if other != document_id]
         foreign = [
             label
             for other in others
             for concept, label in ledgers[other].concept_labels.items()
-            if concept not in ledger.concept_labels
+            if concept not in tagged and label not in reachable
         ]
         for label in rng.sample(foreign, min(per_document // 2, len(foreign))):
             cases.append(

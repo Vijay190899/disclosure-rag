@@ -17,7 +17,7 @@ from decimal import Decimal
 
 from disclosure_rag.answer.generators import ExtractiveGenerator, Generator
 from disclosure_rag.answer.models import Answer, Citation, Route, Status
-from disclosure_rag.answer.router import ConceptIndex, route_question
+from disclosure_rag.answer.router import ConceptIndex, pool_labels, route_question
 from disclosure_rag.labels.ledger import FactLedger
 from disclosure_rag.retrieval.base import Retriever
 
@@ -53,8 +53,13 @@ class AnswerPipeline:
         self.retriever = retriever
         self.generator = generator or ExtractiveGenerator()
         self.abstain_below = abstain_below
+        # Pooled across the corpus, because a filing that references the official
+        # taxonomy instead of bundling labels would otherwise have no structured
+        # path at all. Periods still come from each filing's own facts.
+        pooled = pool_labels(dict(ledgers))
         self.indexes = {
-            document_id: ConceptIndex.from_ledger(ledger) for document_id, ledger in ledgers.items()
+            document_id: ConceptIndex.from_ledger(ledger, pooled)
+            for document_id, ledger in ledgers.items()
         }
 
     @contextmanager

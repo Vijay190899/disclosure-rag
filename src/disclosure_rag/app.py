@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from disclosure_rag import __version__
 from disclosure_rag.answer.models import Answer
 from disclosure_rag.answer.pipeline import AnswerPipeline
+from disclosure_rag.answer.router import pool_labels
 from disclosure_rag.audit import AuditLog, AuditRecord, ReplayResult, replay
 from disclosure_rag.config import get_settings
 from disclosure_rag.corpus import Corpus, load_corpus
@@ -129,12 +130,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Computed once, by asking. See disclosure_rag.examples for why an example
     # is verified rather than assumed.
     pipeline: AnswerPipeline = app.state.pipeline
+    pooled = pool_labels(dict(corpus.ledgers))
 
     def asker(document_id: str) -> Callable[[str], Answer]:
         return lambda question: pipeline.answer(question, document_id)
 
     app.state.examples = {
-        document_id: working_examples(ledger, asker(document_id))
+        document_id: working_examples(ledger, asker(document_id), pooled=pooled)
         for document_id, ledger in corpus.ledgers.items()
     }
     yield
