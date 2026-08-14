@@ -40,11 +40,29 @@ def _page_blocks(pdf_path: Path) -> list[list[str]]:
         document.close()
 
 
-def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None) -> FactLedger:
+def build_one(
+    report: Path,
+    out_dir: Path,
+    source: LxmlFactSource | None = None,
+    force: bool = False,
+) -> FactLedger:
     document_id = report.parent.name
     source = source or LxmlFactSource()
     work = out_dir / document_id
     work.mkdir(parents=True, exist_ok=True)
+
+    # Skip a filing whose content has not changed. Building a ledger renders the
+    # document twice with headless Chromium, so on a corpus of any size a full
+    # rebuild to pick up one new filing is the difference between a job that runs
+    # nightly and one that does not. Keyed on the content hash rather than a
+    # timestamp, because a re-download with the same bytes is not a change.
+    existing = work / "ledger.json"
+    current_hash = hash_file(report)
+    if not force and existing.exists() and (work / "document.pdf").exists():
+        previous = FactLedger.read(existing)
+        if previous.content_hash == current_hash:
+            print(f"[labels] {document_id}: unchanged, skipping")
+            return previous
 
     stamped = work / "report.stamped.xhtml"
     facts = source.extract(report, stamped_out=stamped)
@@ -82,7 +100,7 @@ def build_one(report: Path, out_dir: Path, source: LxmlFactSource | None = None)
         _page_blocks(plain_pdf),
         confirmation,
         concept_labels,
-        content_hash=hash_file(report),
+        content_hash=current_hash,
     )
     ledger.write(work / "ledger.json")
     print(f"[labels] {document_id}: {len(ledger.prose_pairs)} prose pairs")
@@ -93,6 +111,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="disclosure_rag.labels.build", description=__doc__)
     parser.add_argument("--filings", type=Path, required=True, help="directory of filings")
     parser.add_argument("--out", type=Path, required=True, help="where ledgers are written")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="rebuild every filing, including ones whose content has not changed",
+    )
     args = parser.parse_args()
 
     reports = sorted(args.filings.glob("*/report.xhtml"))
@@ -100,7 +123,7 @@ def main() -> int:
         print(f"no filings found under {args.filings}")
         return 1
 
-    ledgers = [build_one(report, args.out) for report in reports]
+    ledgers = [build_one(report, args.out, force=args.force) for report in reports]
     write_index(ledgers, args.out / "index.json")
     review = args.out / "prose_pairs_review.csv"
     candidates = write_review_csv(ledgers, review)

@@ -200,3 +200,66 @@ def test_an_unknown_record_id_reads_as_none(tmp_path: Path) -> None:
 
 def test_a_missing_log_file_is_empty_rather_than_an_error(tmp_path: Path) -> None:
     assert len(AuditLog(tmp_path / "never-written.jsonl")) == 0
+
+
+def test_a_rebuild_skips_a_filing_whose_content_has_not_changed(tmp_path: Path) -> None:
+    """Building renders twice with a browser, so a nightly job must not redo it."""
+    from disclosure_rag.labels.build import build_one
+
+    filing = tmp_path / "filings" / "doc"
+    filing.mkdir(parents=True)
+    report = filing / "report.xhtml"
+    report.write_text("<html><body>nothing tagged</body></html>", encoding="utf-8")
+
+    out = tmp_path / "ledgers"
+    work = out / "doc"
+    work.mkdir(parents=True)
+    FactLedger(document_id="doc", content_hash=hash_file(report)).write(work / "ledger.json")
+    (work / "document.pdf").write_bytes(b"%PDF-1.4 stub")
+
+    # No browser is launched: the skip happens before any rendering.
+    result = build_one(report, out)
+    assert result.content_hash == hash_file(report)
+
+
+def test_an_amended_filing_is_not_skipped(tmp_path: Path) -> None:
+    """A stale ledger must be rebuilt, not returned because a file exists."""
+    from disclosure_rag.labels.build import build_one
+
+    filing = tmp_path / "filings" / "doc"
+    filing.mkdir(parents=True)
+    report = filing / "report.xhtml"
+    report.write_text("<html><body>original</body></html>", encoding="utf-8")
+
+    out = tmp_path / "ledgers"
+    work = out / "doc"
+    work.mkdir(parents=True)
+    FactLedger(document_id="doc", content_hash="a-stale-hash").write(work / "ledger.json")
+    (work / "document.pdf").write_bytes(b"%PDF-1.4 stub")
+
+    result = build_one(report, out)
+    assert result.content_hash == hash_file(report)
+    assert result.content_hash != "a-stale-hash"
+
+
+def test_a_forced_rebuild_ignores_an_up_to_date_ledger(tmp_path: Path) -> None:
+    """An escape hatch for when the builder changed rather than the filing."""
+    from disclosure_rag.labels.build import build_one
+
+    filing = tmp_path / "filings" / "doc"
+    filing.mkdir(parents=True)
+    report = filing / "report.xhtml"
+    report.write_text("<html><body>unchanged</body></html>", encoding="utf-8")
+
+    out = tmp_path / "ledgers"
+    work = out / "doc"
+    work.mkdir(parents=True)
+    stale = FactLedger(document_id="doc", content_hash=hash_file(report))
+    stale.prose_pairs = []
+    stale.write(work / "ledger.json")
+    (work / "document.pdf").write_bytes(b"%PDF-1.4 stub")
+
+    rebuilt = build_one(report, out, force=True)
+    # A real build writes a real PDF over the stub.
+    assert (work / "document.pdf").read_bytes() != b"%PDF-1.4 stub"
+    assert rebuilt.content_hash == hash_file(report)
