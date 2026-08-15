@@ -44,4 +44,59 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
       - name: Test
-        run: uv run pytest
+        run: uv run pytest --cov --cov-report=term-missing
+
+  # The image broke four separate ways once while every test stayed green,
+  # because nothing in CI built it. This builds it and asks it a question.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker build -t disclosure-rag:ci .
+
+      - name: Start
+        run: |
+          docker run -d --name smoke -p 8000:8000             -e SECURITY__API_KEYS=ci-key             disclosure-rag:ci
+
+      - name: Wait for health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS localhost:8000/health > /dev/null; then
+              echo "healthy after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "never became healthy"
+          docker logs smoke
+          exit 1
+
+      # No corpus is mounted, so the assertions are about the contract rather
+      # than about answers: it serves, it declines an unauthenticated caller,
+      # and it reports itself empty instead of pretending otherwise.
+      - name: Smoke
+        run: |
+          set -euo pipefail
+
+          curl -fsS localhost:8000/health | grep -q '"status":"ok"'
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/documents)
+          test "$code" = "401" || { echo "unauthenticated call got $code, expected 401"; exit 1; }
+
+          docs=$(curl -fsS -H 'x-api-key: ci-key' localhost:8000/documents)
+          test "$docs" = "[]" || { echo "expected an empty corpus, got $docs"; exit 1; }
+
+          curl -fsS -H 'x-api-key: ci-key' localhost:8000/ | grep -q '<!doctype html>'
+          curl -fsS localhost:8000/metrics | grep -q 'disclosure_rag'
+          curl -fsS localhost:8000/openapi.json | grep -q '"/query"'
+
+          test "$(docker inspect -f '{{.Config.User}}' disclosure-rag:ci)" = "appuser"             || { echo "image must not run as root"; exit 1; }
+
+          echo "smoke passed"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs smoke

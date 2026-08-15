@@ -56,6 +56,18 @@ class AnswerSettings(BaseModel):
     max_context_chunks: int = Field(default=8, ge=1, le=50)
 
 
+class SecuritySettings(BaseModel):
+    """Access control. Both off unless set, see disclosure_rag.security.
+
+    ``api_keys`` is a comma-separated list so keys can be rotated by adding the
+    new one, moving callers, then removing the old, without a window where
+    neither works.
+    """
+
+    api_keys: str = ""
+    rate_limit_per_minute: int = Field(default=0, ge=0, le=100_000)
+
+
 class Settings(BaseSettings):
     """Top-level application settings."""
 
@@ -73,6 +85,7 @@ class Settings(BaseSettings):
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     answer: AnswerSettings = Field(default_factory=AnswerSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     # Runtime.
     log_level: str = "INFO"

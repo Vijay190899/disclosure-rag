@@ -174,6 +174,25 @@ flowchart LR
     class P,PA soft
 ```
 
+## There is no model writing the answers, and that is the design
+
+A figure question is answered from the ledger, so the answer is the tagged value
+and the citation is the filer's own bounding box. Nothing is generated, so nothing can be invented.
+
+Everything else goes to retrieval and an **extractive** generator: it returns the sentence from the
+retrieved passage that best answers the question, with that passage's region outlined. Also nothing
+generated, so also nothing invented.
+
+An `LlmGenerator` exists behind the same protocol for questions that genuinely need composing across
+paragraphs. It is not the default, and when it is used it is not trusted: the model is asked for an
+answer *and* the passage it used, and the answer is then scored by lexical overlap against that
+passage. Support is measured the same way on both paths, so the abstention threshold means one thing,
+and a fluent sentence that is not in the document scores low rather than high. A model's own
+confidence is never read, because a model asked how sure it is says "very" about a sentence it made
+up.
+
+The service therefore runs, and the whole evaluation reproduces, with no API key and no network.
+
 ## An answer you can prove again
 
 A citation into a document nobody can identify is a screenshot, not evidence. Filings get amended,
@@ -220,7 +239,7 @@ Full design in [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md
 
 Python 3.12, FastAPI, Pydantic, PyMuPDF for layout and rendering, lxml for Inline XBRL, BM25 built
 in-repo, optional dense and hybrid retrieval via fastembed, Qdrant supported for larger corpora.
-Docker, GitHub Actions, mypy strict, 221 tests.
+Docker, GitHub Actions, mypy strict, 285 tests, coverage floor in CI.
 
 Generation sits behind a protocol with an extractive implementation as the default, so the service
 runs and the benchmark reproduces with no credentials. For a question whose answer is printed in the
@@ -232,7 +251,7 @@ Design decisions and their trade-offs are recorded in [docs/adr/](docs/adr/).
 
 ```bash
 make install                 # uv sync
-make check                   # lint, typecheck, 221 tests
+make check                   # lint, typecheck, 285 tests
 
 make fetch                   # download ESEF report packages into data/filings
 make labels                  # build the fact ledgers from them
@@ -280,6 +299,13 @@ the abstention rate: it rises long before anyone notices a wrong answer, and it 
 that a corpus has gone stale or a filing has changed shape.
 
 Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
+
+**Access control is off until configured**, so the demo runs without inventing a credential. Set
+`SECURITY__API_KEYS` to a comma-separated list to require `x-api-key` on every route except
+`/health` and `/metrics`, which stay open so a load balancer can tell "unauthenticated" from "down".
+Set `SECURITY__RATE_LIMIT_PER_MINUTE` to cap a caller. Keys are compared in constant time, several
+are accepted at once so rotation has no gap, and the limiter counts against the key rather than a
+caller-controlled `x-forwarded-for`.
 
 ## Limitations
 

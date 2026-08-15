@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Owner** | Vijay Ananth Karunanithi |
-| **Version** | 1.2.0 |
-| **Last updated** | 2026-08-15 |
+| **Version** | 1.3.0 |
+| **Last updated** | 2026-08-16 |
 
 Sections 5 and 6 define contracts that everything downstream couples to, so they are updated in the
 same change set that alters them. The rest is updated at release boundaries.
@@ -225,16 +225,25 @@ a no-op rebuild of eight filings from minutes to under a second.
 
 ## 9. Security and data protection
 
-- **Untrusted content.** Document text is untrusted input. Retrieved passages are isolated from
-  instructions and the output schema is enforced. The concrete threat is white-on-white text in a PDF
-  reading "ignore previous instructions".
+- **Access control.** API keys and a per-caller rate limit, both off unless configured so the service
+  runs locally without inventing a credential. Keys are compared with `hmac.compare_digest`, several
+  are accepted at once so rotation has no gap, and the limiter keys on the API key rather than
+  `x-forwarded-for`, which the caller controls. `/health` and `/metrics` stay open: a load balancer
+  cannot otherwise tell unauthenticated from down.
+- **Untrusted content.** Document text is untrusted input. Retrieved passages are fenced, the prompt
+  states that passage text is data rather than instruction, and the output schema is enforced. The
+  concrete threat is white-on-white text in a PDF reading "ignore previous instructions". Because
+  that mitigation is not a guarantee, a generated answer is scored by lexical overlap against the
+  passage it claims to come from, so an answer talked out of the document fails the check regardless
+  of what the prompt achieved.
 - **Personal data.** These filings contain personal data. A German or Austrian annual report carries
   individualised management board remuneration and named board members; public availability does not
   remove it from the scope of the GDPR. Processing here is lawful and the corpus is public, but it is
   stated rather than assumed.
 - **Processing location.** The default configuration performs no external model calls at all, since
-  the extractive generator runs locally. An LLM generator sits behind a protocol, so an EU-hosted
-  implementation is a configuration change rather than a rewrite.
+  the extractive generator runs locally. `LlmGenerator` sits behind a `Client` protocol, so an
+  EU-hosted implementation is a few lines rather than a rewrite, and no document text leaves the
+  process unless one is configured.
 - **Secrets** come from the environment and are never committed.
 
 ## 10. Deployment and operations

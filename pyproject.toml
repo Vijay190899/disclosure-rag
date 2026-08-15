@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
+    "pytest-cov>=6.0",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",          # required by fastapi.testclient
     "ruff>=0.7",
@@ -70,3 +71,23 @@ ignore_missing_imports = true
 pythonpath = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# Coverage is a floor, not a target. It answers "is this module tested at all",
+# which is the question a number can answer. Whether the tests are any good is
+# not something a percentage knows, so the floor sits below the current figure
+# rather than being chased upward.
+[tool.coverage.run]
+source = ["src/disclosure_rag"]
+branch = true
+omit = ["*/viewer.py"]  # one HTML string constant, asserted on in test_app
+
+[tool.coverage.report]
+# Below the current figure on purpose. It exists to catch a module going
+# untested, not to be chased upward: the two that mattered were stats.py and
+# benchmark.py, which produce every published number and had no tests at all.
+fail_under = 65
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    '\.\.\.',
+]

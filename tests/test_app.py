@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from disclosure_rag import __version__
 from disclosure_rag.app import app
+from disclosure_rag.config import get_settings
 
 
 def test_health_reports_ok_and_version() -> None:
@@ -101,3 +102,45 @@ def test_the_viewer_calls_only_the_service_it_is_served_from() -> None:
         body = client.get("/").text
     for path in ('"/documents"', '"/health"', '"/query"'):
         assert path in body
+
+
+def test_a_configured_key_is_required_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate has to work through the real middleware, not only in isolation."""
+    monkeypatch.setenv("SECURITY__API_KEYS", "let-me-in")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200  # open, for liveness
+            assert client.get("/documents").status_code == 401
+            assert client.get("/documents", headers={"x-api-key": "wrong"}).status_code == 401
+            ok = client.get("/documents", headers={"x-api-key": "let-me-in"})
+            assert ok.status_code == 200
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_rejection_still_carries_a_request_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 401 nobody can correlate is a 401 nobody can debug."""
+    monkeypatch.setenv("SECURITY__API_KEYS", "let-me-in")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            rejected = client.get("/documents")
+        assert rejected.status_code == 401
+        assert rejected.headers.get("x-request-id")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_the_rate_limit_applies_over_the_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SECURITY__RATE_LIMIT_PER_MINUTE", "2")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            assert client.get("/documents").status_code == 200
+            assert client.get("/documents").status_code == 200
+            limited = client.get("/documents")
+        assert limited.status_code == 429
+        assert limited.headers.get("retry-after")
+    finally:
+        get_settings.cache_clear()

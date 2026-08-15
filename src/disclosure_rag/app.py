@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from disclosure_rag import __version__
@@ -36,6 +36,7 @@ from disclosure_rag.corpus import Corpus, load_corpus
 from disclosure_rag.examples import working_examples
 from disclosure_rag.metrics import Metrics
 from disclosure_rag.render import render_page_with_regions
+from disclosure_rag.security import ApiKeys, RateLimiter, enforce
 from disclosure_rag.versioning import Snapshot
 from disclosure_rag.viewer import PAGE
 
@@ -124,6 +125,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     audit_path = os.environ.get(AUDIT_ENV)
     app.state.audit = AuditLog(Path(audit_path)) if audit_path else None
     app.state.metrics = Metrics()
+    app.state.api_keys = ApiKeys(settings.security.api_keys)
+    app.state.rate_limiter = RateLimiter(settings.security.rate_limit_per_minute)
+    if app.state.api_keys.enabled:
+        logger.info("api key required on %d key(s)", len(app.state.api_keys.keys))
+    else:
+        logger.warning("no api key configured, every caller is accepted")
     if audit_path:
         logger.info("recording answers to %s", audit_path)
 
@@ -154,9 +161,26 @@ app = FastAPI(
 async def correlate(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    """Attach a request id and log the outcome and duration."""
+    """Attach a request id, enforce access, log the outcome and duration."""
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
     start = time.perf_counter()
+    try:
+        enforce(request, request.app.state.api_keys, request.app.state.rate_limiter)
+    except HTTPException as rejected:
+        # Rejections are logged and correlated like anything else. A 401 that
+        # leaves no trace is a 401 nobody can debug.
+        logger.info(
+            "%s %s -> %d (request_id=%s)",
+            request.method,
+            request.url.path,
+            rejected.status_code,
+            request_id,
+        )
+        return JSONResponse(
+            status_code=rejected.status_code,
+            content={"detail": rejected.detail},
+            headers={**(rejected.headers or {}), "x-request-id": request_id},
+        )
     response = await call_next(request)
     duration = (time.perf_counter() - start) * 1000
     response.headers["x-request-id"] = request_id
