@@ -215,19 +215,33 @@ def main() -> int:
         runs.append((retriever.name, results, scores))
         print(render_scores(retriever.name, scores))
 
-    # Deltas against the previous rung, on the exact-figure stratum.
-    figure_questions = [q for q in questions if q.stratum == Stratum.EXACT_FIGURE]
+    # Deltas against the previous rung, per stratum.
+    #
+    # Per stratum rather than on exact_figure alone, because the two strata are
+    # the comparison. ADR-0005 chose BM25 on questions that name a concept by
+    # its declared label, and said explicitly that what would change it is a
+    # question set with genuine vocabulary mismatch. That is the narrative
+    # stratum. Reporting the delta on the easy stratum only would leave the
+    # pre-registered test unrun while looking like it had been.
     deltas: list[tuple[str, str, Delta]] = []
-    if len(runs) > 1 and figure_questions:
+    if len(runs) > 1:
         print("\n[eval] recall@5 deltas, paired bootstrap 95% interval")
-        for (previous_name, previous, _), (name, current, _) in zip(runs, runs[1:], strict=False):
-            delta = paired_bootstrap(
-                per_question_hits(figure_questions, previous, 5),
-                per_question_hits(figure_questions, current, 5),
-            )
-            deltas.append((previous_name, name, delta))
-            print(f"  {previous_name} -> {name}: {delta.render()}")
-            print(f"    n={delta.n}, questions where the two disagree={delta.discordant}")
+        for stratum in (Stratum.EXACT_FIGURE, Stratum.NARRATIVE):
+            scoped = [q for q in questions if q.stratum == stratum]
+            if not scoped:
+                continue
+            print(f"\n  {stratum.value}, n={len(scoped)}")
+            for (previous_name, previous, _), (name, current, _) in zip(
+                runs, runs[1:], strict=False
+            ):
+                delta = paired_bootstrap(
+                    per_question_hits(scoped, previous, 5),
+                    per_question_hits(scoped, current, 5),
+                )
+                if stratum is Stratum.EXACT_FIGURE:
+                    deltas.append((previous_name, name, delta))
+                print(f"    {previous_name} -> {name}: {delta.render()}")
+                print(f"      disagreeing questions={delta.discordant}")
 
     print(
         "\n[eval] retrieval strata are reported separately and never pooled. "
