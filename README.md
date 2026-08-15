@@ -28,7 +28,8 @@ tags.
 
 ## Results
 
-Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
+Reproduce with `make eval`, or the command it wraps under [Running it](#running-it).
+Deterministic, seeded, no API key and no network.
 
 **End to end**, 393 generated cases over eight Austrian filings:
 
@@ -41,7 +42,7 @@ Reproduce with `make eval`. Deterministic, seeded, no API key and no network.
 | False answer rate on unanswerable questions | 233 | **0.030** |
 | Wrong-period traps survived | 80 | **1.000** |
 | Dimensional ambiguity detected | 73 | **1.000** |
-| Latency p50 / p95 | 393 | **0.7 ms / 3.2 ms** |
+| Latency p50 / p95 | 393 | **0.9 ms / 3.5 ms** |
 
 Two of those rows are the ones worth reading, and one of them was earned the hard way.
 
@@ -63,11 +64,23 @@ for most of what the question names. That took the false answer rate from 0.069 
 to exact match. A question with extra qualifiers the filing does not tag now falls back to retrieval
 instead, which is degradation rather than error.
 
-**Retrieval**, BM25 over 1829 chunks, scored against bounding boxes taken from the filings' own tags:
+**Retrieval**, BM25 over 1829 chunks, scored against bounding boxes taken from the filings' own tags.
+Two strata, reported separately and never pooled:
 
-| n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | Citation IoU@0.5 |
-|---|---|---|---|---|---|---|
-| 320 | 0.278 | 0.553 | 0.678 | 0.396 | 0.462 | **0.056** |
+| Stratum | n | Recall@1 | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | Citation IoU@0.5 |
+|---|---|---|---|---|---|---|---|
+| exact figure | 320 | 0.278 | 0.553 | 0.678 | 0.396 | 0.462 | **0.056** |
+| narrative | 20 | 0.000 | 0.300 | 0.350 | 0.093 | 0.155 | 0.000 |
+
+**Exact figure** asks *"Wie hoch war Bilanzsumme zum 31.12.2022?"*, using the label the filer
+declared. **Narrative** asks in the filing's own management-commentary wording, *"Die kurzfristigen
+Vermögenswerte erhöhten sich vor allem infolge gestiegener Vorräte..."*, and the answer is the
+statement row. Same fact, different vocabulary, and that gap is the whole difficulty. The narrative
+questions come from sentences confirmed by hand as genuine restatements, because mechanical
+extraction produces candidates and cannot promote them.
+
+Twenty is a small stratum and it is reported as one. It is enough to make the comparison below
+possible and not enough to settle it.
 
 That last column is deliberately shown rather than omitted, because it is the worst number here and
 it is the one that explains the architecture. It asks whether the single figure the system would
@@ -81,17 +94,29 @@ question is answered exactly and the citation is the filer's own tag.
 
 **The retrieval ladder**, same questions, at the 200-token chunk size a 512-token embedder requires:
 
-| Retriever | Recall@5 | MRR@10 | nDCG@10 |
-|---|---|---|---|
-| **BM25** | **0.478** | **0.352** | **0.401** |
-| dense, multilingual-e5-large | 0.159 | 0.089 | 0.122 |
-| hybrid, reciprocal rank fusion | 0.303 | 0.203 | 0.268 |
+| Retriever | exact figure, n=320 | | | narrative, n=20 | | |
+|---|---|---|---|---|---|---|
+| | Recall@5 | MRR@10 | nDCG@10 | Recall@5 | MRR@10 | nDCG@10 |
+| **BM25** | **0.478** | **0.352** | **0.401** | 0.200 | 0.080 | 0.143 |
+| dense, multilingual-e5-large | 0.159 | 0.089 | 0.122 | 0.200 | 0.100 | **0.190** |
+| hybrid, reciprocal rank fusion | 0.303 | 0.203 | 0.268 | **0.350** | **0.132** | 0.198 |
 
-Hybrid retrieval, the obvious choice, loses to plain BM25 by a paired-bootstrap margin of
-**-0.319 [-0.378, -0.259]** on the dense step. A question here names a concept by the label the filer
-declared, and that label appears verbatim in the row being looked for, so there is no vocabulary gap
-for embeddings to bridge and fusing a weaker retriever in only costs ranking positions. BM25 is the
-default. [ADR-0005](docs/adr/0005-bm25-default-no-agent-framework.md).
+Hybrid retrieval, the obvious choice, loses to plain BM25 on the exact-figure stratum by a
+paired-bootstrap margin of **-0.319 [-0.378, -0.259]** on the dense step. A question there names a
+concept by the label the filer declared, and that label appears verbatim in the row being looked for,
+so there is no vocabulary gap for embeddings to bridge and fusing a weaker retriever in only costs
+ranking positions.
+
+**On the narrative stratum that penalty disappears entirely: -0.319 becomes +0.000
+[-0.200, +0.200].** This was the pre-registered test. The record chose BM25 and stated in advance
+what would overturn it, a question set with genuine vocabulary mismatch, and noted that set did not
+exist yet. It exists now, and it shows BM25's advantage was never about retrieval being better here.
+It was about the questions containing the answer's own words.
+
+It does not overturn the decision. At n=20 both narrative intervals span zero, so the honest reading
+is that the gap vanishes rather than reverses, and BM25 still wins decisively on the only stratum
+large enough to say so. BM25 stays the default, now for a measured reason rather than an untested
+one. [ADR-0005](docs/adr/0005-bm25-default-no-agent-framework.md).
 
 **Label quality**, the gold standard the above is measured against: 2418 of 2420 tagged facts
 located, median IoU 0.92 to 0.99 per filing between the tag's location and an independent text search
@@ -263,14 +288,15 @@ Set `DISCLOSURE_RAG_AUDIT_LOG` to record answers for later replay.
   and the fetcher takes a country list.
 - **Retrieval quality is moderate.** Recall@10 of 0.678 on figure questions is a baseline, not a
   finished component. It matters less than it looks because those questions route to the structured
-  layer, but it bounds the narrative path.
-- **The narrative path is governed by abstention rather than measured.** A gold set for it needs
-  reviewed question and answer pairs. Mechanical extraction produces candidates but cannot promote
-  them: a statement row and a narrative sentence restating it contain the same label and the same
-  figure, so the available signals do not separate them. `make review` ranks the candidates by how
-  much they read like a person writing rather than a table row, and confirms them one keystroke at a
-  time. On this corpus that queue is 28 candidates, so the stratum it produces would be small and
-  would be reported with its n rather than as a headline.
+  layer, but it bounds everything that does not.
+- **The narrative stratum is 20 questions.** Enough to show that BM25's advantage over dense
+  retrieval is a property of label-verbatim questions rather than of retrieval, and not enough for
+  the interval to exclude zero. Mechanical extraction produces candidates and cannot promote them: a
+  statement row and a narrative sentence restating it contain the same label and the same figure, so
+  the available signals do not separate them. The review tool ranks candidates by how much they read
+  like a person writing rather than a table row and confirms them one keystroke at a time, but this
+  corpus only offers about 28 worth reviewing. Settling the retrieval question needs more filings,
+  not a better extractor.
 - **Standard IFRS labels are not always bundled.** Issuers must label their own extension concepts
   but may reference the official taxonomy for the rest, so concept label coverage varies by filer.
   One filing in this corpus declares none at all. Wordings are pooled across the corpus, which gives

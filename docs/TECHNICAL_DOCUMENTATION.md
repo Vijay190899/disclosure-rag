@@ -195,7 +195,7 @@ Deterministic, seeded, no credentials. `make eval` reproduces every published nu
 
 | Suite | Measures |
 |---|---|
-| Retrieval | Recall@1/5/10, MRR@10, nDCG@10, citation IoU@0.5 |
+| Retrieval | Recall@1/5/10, MRR@10, nDCG@10, citation IoU@0.5, per stratum with paired bootstrap deltas |
 | End to end | Routing accuracy, answer exact match, abstention precision and recall, false answer rate, wrong-period trap survival, latency p50 and p95 |
 | Label quality | Share of tagged facts located, median IoU against an independent text search |
 | Calibration | Expected calibration error and a reliability table over answers actually given |
@@ -254,8 +254,9 @@ supported behind the `Retriever` protocol for corpora that outgrow one machine.
 - **Eight filings.** Enough for the benchmark to be meaningful, not enough to claim generality.
 - **Retrieval quality is moderate.** Recall@10 of 0.678 on figure questions is a baseline. It matters
   less than it appears because those questions route to the ledger, but it bounds the narrative path.
-- **The narrative path is governed by abstention rather than measured**, pending a gold set for
-  qualitative answers.
+- **The narrative stratum is 20 questions**, drawn from hand-confirmed prose pairs. It is large
+  enough to show that BM25 beats dense retrieval only on questions that quote the concept's declared
+  label, and too small to establish what should replace it. ADR-0005.
 - **Concept label coverage varies by filer**, so the structured path reaches fewer concepts for issuers
   who reference the official taxonomy instead of declaring labels. One filing here declares none.
   Wordings are pooled across the corpus to cover that, which means a question may have to use another
